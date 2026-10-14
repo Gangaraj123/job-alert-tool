@@ -15,6 +15,7 @@ from src import db  # noqa: E402
 from src.pipeline import run_pipeline  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from style import inject_style  # noqa: E402
+from timeutil import to_ist  # noqa: E402
 
 sync_secrets()
 
@@ -77,7 +78,7 @@ else:
     for r in runs:
         duration_label = f"{r['duration_seconds']:.1f}s" if r.get("duration_seconds") else "running…"
         label = (
-            f"{r['started_at']} · {r['triggered_by']} · "
+            f"{to_ist(r['started_at'])} · {r['triggered_by']} · "
             f"{r.get('new_jobs_count') or 0} new · "
             f"{r.get('companies_broken') or 0} broken · {duration_label}"
         )

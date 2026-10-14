@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import db  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from style import inject_style  # noqa: E402
+from timeutil import to_ist  # noqa: E402
 
 sync_secrets()
 
@@ -68,7 +69,7 @@ else:
             title = str(job.get("title") or "Untitled role")
             company = str(job.get("company_name") or "Company")
             location = str(job.get("location") or "Location not specified")
-            seen = str(job.get("first_seen_at") or "")[:10]
+            seen = to_ist(job.get("first_seen_at"))
             badges = " · ".join(x for x in ["Closed" if job["is_closed"] else "Open", "Done" if job["done"] else ""] if x)
             left.markdown(f"**{title}**  \n{company} · {location}  \n<small>{badges} · Found {seen}</small>", unsafe_allow_html=True)
             action.link_button("View role ↗", str(job["url"]), use_container_width=True)

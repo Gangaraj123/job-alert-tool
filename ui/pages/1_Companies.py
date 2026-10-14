@@ -11,6 +11,7 @@ from src.pipeline import discover_career_url, preview_detect_and_fetch  # noqa: 
 from src.webutil import favicon_url, rerank_company_matches, search_companies  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from style import inject_style, logo_img  # noqa: E402
+from timeutil import to_ist  # noqa: E402
 
 sync_secrets()
 
@@ -139,7 +140,7 @@ else:
             status_icon = {"ok": "🟢", "error": "🔴"}.get(status, "⚪")
             cols[2].markdown(
                 f"ATS: `{ats_label}`  \n"
-                f"{status_icon} {status} · last checked: {c.get('last_checked_at') or '—'}  \n"
+                f"{status_icon} {status} · last checked: {to_ist(c.get('last_checked_at'))}  \n"
                 f"jobs last run: {c.get('last_job_count') or 0}"
             )
             if c.get("last_error"):
