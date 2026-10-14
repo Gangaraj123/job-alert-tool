@@ -462,6 +462,28 @@ def get_filters() -> dict:
     return dict(DEFAULT_FILTERS)
 
 
+def check_and_increment_ai_budget(daily_limit: int = 50) -> bool:
+    """Hard daily cap on AI (Gemini/Vertex) calls, independent of whatever
+    provider-side quota or billing alert is in place — defense in depth so a
+    bug or unexpected usage spike can't run away. Returns True (and counts
+    this call) if still under the cap for today; False means skip the AI
+    call entirely for the rest of the day."""
+    import datetime as _dt
+    key = f"ai_calls_{_dt.datetime.utcnow().strftime('%Y-%m-%d')}"
+    client = get_client()
+    res = client.execute("SELECT value FROM settings WHERE key = ?", [key])
+    rows = _rows_to_dicts(res)
+    count = int(rows[0]["value"]) if rows else 0
+    if count >= daily_limit:
+        return False
+    client.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        [key, str(count + 1), _now()],
+    )
+    return True
+
+
 def set_filters(filters: dict) -> None:
     client = get_client()
     client.execute(

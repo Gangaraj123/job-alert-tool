@@ -12,10 +12,11 @@ fetch:
   max_sitemap_urls: 25
 
 discovery:
-  # Used only by the "Add company" career-page discovery in the UI, as a
-  # fallback after plain URL-pattern guessing fails. Needs GEMINI_API_KEY —
-  # without it, discovery just uses the pattern guesses.
-  gemini_model: gemini-3.8-flash
+  # Used by "Add company" career-page discovery (AI-first) and search-result
+  # reranking in the UI. Needs either Vertex AI credentials (preferred —
+  # VERTEX_PROJECT + GOOGLE_VERTEX_CREDENTIALS_JSON) or GEMINI_API_KEY as a
+  # fallback — without either, these features just use their non-AI fallback.
+  gemini_model: gemini-2.5-flash
 
 logging:
   level: INFO

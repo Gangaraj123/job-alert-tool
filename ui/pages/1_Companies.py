@@ -70,6 +70,8 @@ with st.expander("＋ Add a company", expanded=not db.list_companies()):
             gemini_status = discovery.get("gemini_status")
             if gemini_status == "rate_limited":
                 st.error("AI search (Gemini) hit its rate limit — falling back to basic pattern guessing only. Try again in a bit, or paste the URL manually below.")
+            elif gemini_status == "budget_exceeded":
+                st.warning("This app's own daily AI usage cap has been reached — falling back to basic pattern guessing. Resets tomorrow (UTC).")
             elif gemini_status == "not_configured":
                 st.caption("AI search isn't configured (no GEMINI_API_KEY) — only basic pattern guessing was tried.")
             elif gemini_status == "unavailable":

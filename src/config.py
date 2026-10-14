@@ -29,6 +29,14 @@ class Settings:
 
     gemini_api_key: str | None
 
+    # Vertex AI (preferred when configured): bills against a GCP project's
+    # billing account (e.g. free trial credits) instead of the AI Studio
+    # key's thin free-tier quota. GOOGLE_VERTEX_CREDENTIALS_JSON holds the
+    # full service account key JSON as a single-line string.
+    google_vertex_credentials_json: str | None
+    vertex_project: str | None
+    vertex_location: str
+
     raw: dict
 
 
@@ -40,6 +48,9 @@ def load_settings() -> Settings:
         gmail_app_password=_env("GMAIL_APP_PASSWORD"),
         digest_to_email=_env("DIGEST_TO_EMAIL"),
         gemini_api_key=_env("GEMINI_API_KEY"),
+        google_vertex_credentials_json=_env("GOOGLE_VERTEX_CREDENTIALS_JSON"),
+        vertex_project=_env("VERTEX_PROJECT"),
+        vertex_location=_env("VERTEX_LOCATION", "us-central1"),
         raw={},
     )
 
