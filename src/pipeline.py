@@ -175,7 +175,7 @@ def discover_career_url(
         if on_progress:
             on_progress(msg)
 
-    def _try(url: str, gemini_status: str) -> dict | None:
+    def _try(url: str, gemini_status: str, follow_links: bool = True) -> dict | None:
         if url in tried_urls:
             return None
         tried_urls.add(url)
@@ -185,6 +185,19 @@ def discover_career_url(
         if result["ok"] and result["job_count"] > 0:
             return {"found": True, "url": url, **result, "attempted": attempted,
                      "gemini_status": gemini_status, "timed_out": False}
+
+        # This page itself has no jobs — but it might be a "hub" page (e.g.
+        # stripe.com/careers) linking to the real listing via a "Search open
+        # roles" button. Check immediately rather than only as a last resort
+        # after every other top-level candidate is exhausted — by then the
+        # time budget is usually already spent.
+        if follow_links and not _out_of_time():
+            _progress(f"Reading {url} for job-related links…")
+            for link in find_job_related_links(url):
+                if _out_of_time():
+                    break
+                if (found := _try(link, gemini_status, follow_links=False)):
+                    return found
         return None
 
     # Fastest, cheapest tier first: no AI, no rendering, and crucially no
@@ -231,28 +244,6 @@ def discover_career_url(
         f"https://{domain}",
     ]
     for url in candidates:
-        if _out_of_time():
-            return {"found": False, "url": None, "attempted": attempted,
-                     "gemini_status": gemini["status"], "timed_out": True}
-        if (found := _try(url, gemini["status"])):
-            return found
-
-    # Last resort: a careers "hub" page (e.g. stripe.com/careers) often has
-    # zero postings itself and links out to the real listing (e.g.
-    # stripe.com/careers/search via a "Search open roles" button). Read the
-    # actual page and follow links that look job-related, instead of
-    # guessing more fixed paths.
-    hub_candidates = [f"https://{domain}/careers", f"https://{domain}"]
-    link_candidates: list[str] = []
-    for hub in hub_candidates:
-        if _out_of_time():
-            break
-        _progress(f"Reading {hub} for job-related links…")
-        for link in find_job_related_links(hub):
-            if link not in tried_urls and link not in link_candidates:
-                link_candidates.append(link)
-
-    for url in link_candidates:
         if _out_of_time():
             return {"found": False, "url": None, "attempted": attempted,
                      "gemini_status": gemini["status"], "timed_out": True}

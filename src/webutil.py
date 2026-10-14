@@ -42,7 +42,7 @@ VERTEX_URL_TEMPLATE = (
     "/locations/{location}/publishers/google/models/{model}:generateContent"
 )
 
-_URL_RE = re.compile(r"https?://[^\s\"'<>\)\]]+")
+_URL_RE = re.compile(r"https?://[^\s\"'`<>\)\]]+")
 
 _vertex_credentials = None  # lazily created, cached across calls in this process
 
@@ -241,7 +241,7 @@ def find_career_urls_via_gemini(company_name: str, domain: str, count: int = 3) 
     seen = set()
     out = []
     for u in urls:
-        u = u.rstrip(".,")
+        u = u.rstrip(".,*_)")  # trailing markdown/punctuation the regex can't exclude mid-URL
         if u not in seen:
             seen.add(u)
             out.append(u)
