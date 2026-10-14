@@ -28,7 +28,12 @@ def fetch(career_page_url: str, **_) -> list[dict]:
             browser = p.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
-                page.goto(career_page_url, wait_until="networkidle", timeout=30000)
+                # "networkidle" waits for ALL background network activity to
+                # quiet down, which can stall for a long time on sites with
+                # constant polling/analytics beacons. "domcontentloaded" is
+                # enough for a React/SPA app's initial render + hydration.
+                page.goto(career_page_url, wait_until="domcontentloaded", timeout=12000)
+                page.wait_for_timeout(1500)  # brief settle for post-load JS rendering
                 html = page.content()
             finally:
                 browser.close()

@@ -122,7 +122,12 @@ def preview_detect_and_fetch(url: str) -> dict:
         }
 
 
-def discover_career_url(domain: str, company_name: str | None = None) -> dict:
+def discover_career_url(
+    domain: str,
+    company_name: str | None = None,
+    max_seconds: float = 45,
+    on_progress=None,
+) -> dict:
     """Given just a domain (from the company-name search, not a career page
     URL), finds and validates the real careers page. AI-first:
 
@@ -131,27 +136,57 @@ def discover_career_url(domain: str, company_name: str | None = None) -> dict:
        arbitrary companies (unlike fixed URL patterns).
     2. A handful of common URL patterns as a free fallback, used when Gemini
        isn't configured, is rate-limited, or genuinely finds nothing.
+    3. Following real job-related links found on a "hub" page.
 
-    Every candidate from either tier is validated the same way regardless of
-    source: we actually try fetching jobs from it, never trusted on the
-    model's word — a result only counts as "found" if it returns real
-    postings.
+    Every candidate from any tier is validated the same way: we actually try
+    fetching jobs from it, never trusted on the model's word — a result only
+    counts as "found" if it returns real postings.
 
-    Returns {found, url, ats_type, tier, job_count, attempted, gemini_status}."""
+    This can chain through many slow network calls (each candidate retries
+    on connection errors, and the rendering tier can take real time), so
+    it's bounded by a hard wall-clock budget (`max_seconds`) rather than
+    running every candidate regardless of how long it takes — once the
+    budget is spent, remaining candidates are skipped and whatever was found
+    so far (or "not found") is returned. `on_progress(message)`, if given,
+    is called before each attempt so a caller (e.g. the UI) can show live
+    status instead of a single static spinner for the whole call.
+
+    Returns {found, url, ats_type, tier, job_count, attempted, gemini_status, timed_out}."""
+    import time as _time
+
+    started = _time.monotonic()
     attempted = []
     seen_domains = {domain}
 
+    def _out_of_time() -> bool:
+        return _time.monotonic() - started > max_seconds
+
+    def _progress(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    def _try(url: str, gemini_status: str) -> dict | None:
+        _progress(f"Checking {url}…")
+        result = preview_detect_and_fetch(url)
+        attempted.append({"url": url, **result})
+        if result["ok"] and result["job_count"] > 0:
+            return {"found": True, "url": url, **result, "attempted": attempted,
+                     "gemini_status": gemini_status, "timed_out": False}
+        return None
+
+    _progress("Asking Gemini for likely career page URLs…")
     gemini = find_career_urls_via_gemini(company_name or domain, domain)
+
     for url in gemini["urls"]:
+        if _out_of_time():
+            return {"found": False, "url": None, "attempted": attempted,
+                     "gemini_status": gemini["status"], "timed_out": True}
         candidate_domain = domain_from_url(url)
         if candidate_domain in seen_domains:
             continue
         seen_domains.add(candidate_domain)
-
-        result = preview_detect_and_fetch(url)
-        attempted.append({"url": url, **result})
-        if result["ok"] and result["job_count"] > 0:
-            return {"found": True, "url": url, **result, "attempted": attempted, "gemini_status": gemini["status"]}
+        if (found := _try(url, gemini["status"])):
+            return found
 
     candidates = [
         f"https://{domain}/careers",
@@ -161,10 +196,11 @@ def discover_career_url(domain: str, company_name: str | None = None) -> dict:
         f"https://{domain}",
     ]
     for url in candidates:
-        result = preview_detect_and_fetch(url)
-        attempted.append({"url": url, **result})
-        if result["ok"] and result["job_count"] > 0:
-            return {"found": True, "url": url, **result, "attempted": attempted, "gemini_status": gemini["status"]}
+        if _out_of_time():
+            return {"found": False, "url": None, "attempted": attempted,
+                     "gemini_status": gemini["status"], "timed_out": True}
+        if (found := _try(url, gemini["status"])):
+            return found
 
     # Last resort: a careers "hub" page (e.g. stripe.com/careers) often has
     # zero postings itself and links out to the real listing (e.g.
@@ -175,17 +211,22 @@ def discover_career_url(domain: str, company_name: str | None = None) -> dict:
     hub_candidates = [f"https://{domain}/careers", f"https://{domain}"]
     link_candidates: list[str] = []
     for hub in hub_candidates:
+        if _out_of_time():
+            break
+        _progress(f"Reading {hub} for job-related links…")
         for link in find_job_related_links(hub):
             if link not in tried_urls and link not in link_candidates:
                 link_candidates.append(link)
 
     for url in link_candidates:
-        result = preview_detect_and_fetch(url)
-        attempted.append({"url": url, **result})
-        if result["ok"] and result["job_count"] > 0:
-            return {"found": True, "url": url, **result, "attempted": attempted, "gemini_status": gemini["status"]}
+        if _out_of_time():
+            return {"found": False, "url": None, "attempted": attempted,
+                     "gemini_status": gemini["status"], "timed_out": True}
+        if (found := _try(url, gemini["status"])):
+            return found
 
-    return {"found": False, "url": None, "attempted": attempted, "gemini_status": gemini["status"]}
+    return {"found": False, "url": None, "attempted": attempted,
+             "gemini_status": gemini["status"], "timed_out": False}
 
 
 def run_test_company(name: str) -> None:

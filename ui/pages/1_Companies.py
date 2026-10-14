@@ -35,8 +35,12 @@ with st.expander("＋ Add a company", expanded=not db.list_companies()):
             st.rerun()
 
         if "discovery" not in st.session_state:
-            with st.spinner(f"Finding {picked['name']}'s career page…"):
-                st.session_state["discovery"] = discover_career_url(picked["domain"], picked["name"])
+            status = st.status(f"Finding {picked['name']}'s career page…", expanded=True)
+            st.session_state["discovery"] = discover_career_url(
+                picked["domain"], picked["name"],
+                on_progress=lambda msg: status.update(label=msg),
+            )
+            status.update(label="Done", state="complete", expanded=False)
         discovery = st.session_state["discovery"]
 
         if discovery["found"]:
@@ -61,6 +65,8 @@ with st.expander("＋ Add a company", expanded=not db.list_companies()):
                     st.success(f"Added {name}.")
                     st.rerun()
         else:
+            if discovery.get("timed_out"):
+                st.error("Discovery took too long (45s budget) and was stopped partway through — some candidates below weren't tried. Paste the URL manually, or try again.")
             gemini_status = discovery.get("gemini_status")
             if gemini_status == "rate_limited":
                 st.error("AI search (Gemini) hit its rate limit — falling back to basic pattern guessing only. Try again in a bit, or paste the URL manually below.")
