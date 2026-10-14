@@ -433,6 +433,22 @@ def list_runs(limit: int = 20) -> list[dict]:
     return _rows_to_dicts(res)
 
 
+def clear_jobs() -> None:
+    """Deletes every job (and the run_jobs rows referencing them). Run
+    history rows themselves are kept — only what they found is cleared."""
+    client = get_client()
+    client.execute("DELETE FROM run_jobs")
+    client.execute("DELETE FROM jobs")
+
+
+def clear_runs() -> None:
+    """Deletes run history (and the run_jobs rows referencing those runs).
+    Jobs themselves are kept — only the run log is cleared."""
+    client = get_client()
+    client.execute("DELETE FROM run_jobs")
+    client.execute("DELETE FROM runs")
+
+
 def record_run_jobs(run_id: int, job_ids: list[str]) -> None:
     """Records every job a run's fetch matched (new or already-seen), so
     run history can show the full snapshot of what that run found — the

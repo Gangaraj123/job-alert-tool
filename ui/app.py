@@ -91,3 +91,12 @@ else:
 
 if errored:
     st.warning(f"{len(errored)} company fetcher(s) are currently failing — check the Companies page.")
+
+st.divider()
+with st.expander("⚠️ Danger zone"):
+    st.caption("These don't affect your companies or filters — only the run log / discovered jobs.")
+    confirm_runs = st.checkbox("I'm sure — delete all run history", key="confirm_clear_runs")
+    if st.button("🗑️ Clear run history", disabled=not confirm_runs):
+        db.clear_runs()
+        st.success("Run history cleared.")
+        st.rerun()

@@ -77,3 +77,14 @@ else:
                 db.mark_job_done(job["id"], checked)
                 _recent_jobs.clear()
                 st.rerun()
+
+st.divider()
+with st.expander("⚠️ Danger zone"):
+    st.caption("This doesn't affect your companies, filters, or run history — only the jobs themselves. "
+               "Re-running the pipeline will re-discover anything still actually posted.")
+    confirm_jobs = st.checkbox("I'm sure — delete all jobs", key="confirm_clear_jobs")
+    if st.button("🗑️ Clear all jobs", disabled=not confirm_jobs):
+        db.clear_jobs()
+        _recent_jobs.clear()
+        st.success("All jobs cleared.")
+        st.rerun()
