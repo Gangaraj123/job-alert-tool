@@ -1,0 +1,55 @@
+# Tuning knobs for the pipeline. The company list itself lives in the DB (edit it
+# via the Streamlit UI) — this file is everything else.
+
+filters:
+  # A job passes the pre-filter if its title+description contains ANY of these
+  # (case-insensitive substring match). Empty list = no keyword filtering.
+  keywords:
+    - "founding engineer"
+    - "staff engineer"
+    - "backend"
+    - "full stack"
+    - "platform engineer"
+    - "infrastructure"
+  # A job passes if its location contains ANY of these, OR is remote-friendly.
+  # Empty list = no location filtering.
+  locations:
+    - "remote"
+    - "bengaluru"
+    - "bangalore"
+    - "india"
+  # If true, a job whose location string contains "remote" always passes the
+  # location filter even if it doesn't match the list above.
+  always_allow_remote: true
+
+scoring:
+  # Model used for AI fit-scoring. Swap this if your account doesn't have
+  # access to the exact id below (check with `claude models list` or the
+  # Anthropic console) — e.g. "claude-haiku-4-5-20251001" is the current
+  # Haiku id as of writing.
+  model: claude-haiku-5-5
+  max_tokens: 1024
+  # Jobs scoring below this are stored (for history) but excluded from the digest.
+  min_fit_score_for_digest: 60
+
+fetch:
+  # Model used ONLY for the last-resort Playwright+AI extraction tier.
+  model: claude-haiku-5-5
+  max_tokens: 4096
+  # How much rendered page text to hand to the model, to bound token cost.
+  max_page_text_chars: 15000
+  request_timeout_seconds: 20
+  max_retries: 3
+  retry_backoff_seconds: 2
+  # Re-detect a company's ATS after this many days even if cached.
+  ats_cache_ttl_days: 14
+  # Sitemap discovery tier: cap how many candidate job URLs it will visit.
+  max_sitemap_urls: 25
+
+digest:
+  # Telegram message length cap is 4096 chars; we chunk automatically.
+  max_jobs_per_digest: 50
+
+logging:
+  level: INFO
+  file: job_alert.log

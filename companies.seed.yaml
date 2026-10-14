@@ -1,0 +1,24 @@
+# One-time seed list. Run `python -m src.main --seed` once to load these into
+# the DB. After that, add/edit/remove companies from the Streamlit UI — this
+# file is NOT read again automatically.
+
+- name: Anthropic
+  url: https://www.anthropic.com/careers
+
+- name: Stripe
+  url: https://stripe.com/jobs
+
+- name: Notion
+  url: https://www.notion.so/careers
+
+- name: Linear
+  url: https://linear.app/careers
+
+- name: Vercel
+  url: https://vercel.com/careers
+
+- name: Ramp
+  url: https://ramp.com/careers
+
+- name: Airbyte
+  url: https://airbyte.com/careers

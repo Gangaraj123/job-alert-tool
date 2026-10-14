@@ -1,0 +1,10 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+data/local.db
+data/local.db-*
+job_alert.log
+.streamlit/secrets.toml
+ui/.streamlit/secrets.toml
