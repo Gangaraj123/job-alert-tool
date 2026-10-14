@@ -7,7 +7,11 @@ import os
 
 import streamlit as st
 
-_SECRET_KEYS = ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "BRAVE_SEARCH_API_KEY")
+_SECRET_KEYS = (
+    "TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN",
+    "GEMINI_API_KEY",
+    "VERTEX_PROJECT", "VERTEX_LOCATION", "GOOGLE_VERTEX_CREDENTIALS_JSON",
+)
 
 
 def sync_secrets() -> None:
