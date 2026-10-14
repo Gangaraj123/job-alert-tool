@@ -27,6 +27,63 @@ SUPPORTED = {
     "recruitee",
 }
 
+# ATS types with a direct, guessable "company-slug -> board" API — tried
+# without ever touching the company's own domain. This matters: a company
+# can have active bot-protection (Akamai/Cloudflare WAF) blocking both plain
+# HTTP and headless-browser fetches of their own site, while their ATS board
+# (hosted on Greenhouse/Lever/etc.'s infrastructure, not theirs) is wide
+# open. Workday and Recruitee are excluded — their URLs need a site/tenant
+# host variant that can't be guessed from a slug alone.
+_GUESSABLE_ATS = ("greenhouse", "lever", "ashby", "workable", "smartrecruiters")
+
+_BOARD_URL_TEMPLATES = {
+    "greenhouse": "https://boards.greenhouse.io/{slug}",
+    "lever": "https://jobs.lever.co/{slug}",
+    "ashby": "https://jobs.ashbyhq.com/{slug}",
+    "workable": "https://apply.workable.com/{slug}",
+    "smartrecruiters": "https://careers.smartrecruiters.com/{slug}",
+}
+
+
+def _slug_candidates(company_name: str, domain: str) -> list[str]:
+    import re as _re
+
+    candidates = []
+    name_clean = _re.sub(r"[^a-z0-9\s-]", "", company_name.lower()).strip()
+    if name_clean:
+        candidates.append(name_clean.replace(" ", ""))
+        candidates.append(name_clean.replace(" ", "-"))
+
+    domain_label = domain.split(".")[0].lower()
+    if domain_label:
+        candidates.append(domain_label)
+
+    seen = set()
+    out = []
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def guess_board(company_name: str, domain: str) -> tuple[str, str, str, list[dict]] | None:
+    """Tries obvious slug variants of the company name/domain against every
+    directly-guessable ATS. Returns (ats_type, slug, board_url, jobs) on the
+    first one that actually has jobs, or None. Pure API calls — no
+    rendering, no AI, and crucially no request to the company's own domain
+    at all, so it works even when that domain has bot-protection blocking
+    every other tier."""
+    for slug in _slug_candidates(company_name, domain):
+        for ats_type in _GUESSABLE_ATS:
+            try:
+                jobs = fetch(ats_type, slug)
+            except FetchError:
+                continue
+            if jobs:
+                return ats_type, slug, _BOARD_URL_TEMPLATES[ats_type].format(slug=slug), jobs
+    return None
+
 
 def fetch(ats_type: str, identifier: str, **kwargs) -> list[dict]:
     fn = {

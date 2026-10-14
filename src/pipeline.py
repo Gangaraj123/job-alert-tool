@@ -132,8 +132,12 @@ def discover_career_url(
     on_progress=None,
 ) -> dict:
     """Given just a domain (from the company-name search, not a career page
-    URL), finds and validates the real careers page. AI-first:
+    URL), finds and validates the real careers page:
 
+    0. A direct ATS board guessed from the company name/domain (Greenhouse/
+       Lever/Ashby/Workable/SmartRecruiters) — free, instant, and never
+       touches the company's own domain, so it works even when that domain
+       has bot-protection blocking everything else.
     1. Gemini with Google Search grounding — it's actually looking at live
        web results, not guessing from training data, so it generalizes to
        arbitrary companies (unlike fixed URL patterns).
@@ -182,6 +186,23 @@ def discover_career_url(
             return {"found": True, "url": url, **result, "attempted": attempted,
                      "gemini_status": gemini_status, "timed_out": False}
         return None
+
+    # Fastest, cheapest tier first: no AI, no rendering, and crucially no
+    # request to the company's own domain at all — just tries obvious slug
+    # variants directly against each ATS's own API. This finds companies
+    # whose own site blocks us (bot-protection WAFs block plain HTTP *and*
+    # headless-browser requests alike) but who still have a wide-open board
+    # hosted on the ATS's infrastructure instead of theirs.
+    if company_name:
+        _progress("Checking for a direct ATS board under the company name…")
+        guessed = ats_api.guess_board(company_name, domain)
+        if guessed:
+            ats_type, slug, board_url, jobs = guessed
+            attempted.append({"url": board_url, "ok": True, "ats_type": ats_type,
+                               "ats_identifier": slug, "tier": "ats_api", "job_count": len(jobs), "error": None})
+            return {"found": True, "url": board_url, "ok": True, "ats_type": ats_type,
+                     "ats_identifier": slug, "tier": "ats_api", "job_count": len(jobs),
+                     "attempted": attempted, "gemini_status": "not_tried", "timed_out": False}
 
     _progress("Asking Gemini for likely career page URLs…")
     # Each candidate's full validation chain got more thorough (and thus
