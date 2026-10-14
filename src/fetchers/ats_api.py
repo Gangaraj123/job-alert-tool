@@ -144,13 +144,24 @@ def fetch_smartrecruiters(slug: str, **_) -> list[dict]:
 
 
 def fetch_workday(identifier: str, site: str | None = None, **_) -> list[dict]:
-    """Best-effort: tenant is the identifier, site is the career site slug
-    (e.g. "External"). Workday's CXS API shape is not officially public and
+    """Best-effort: Workday's CXS API shape is not officially public and
     varies by tenant, so any failure here just surfaces as a FetchError and
-    the pipeline falls through to the next tier for this company."""
+    the pipeline falls through to the next tier for this company.
+
+    `identifier` is "tenant:site:host" as encoded by detector.py (host is
+    the wd1/wd3/... variant actually seen in this company's URL — hardcoding
+    wd1 for every tenant was wrong, since Workday assigns different regional
+    host numbers per tenant). Falls back to plain-tenant + "External"/"wd1"
+    defaults if an older, pre-migration identifier (just the tenant) is
+    passed in."""
+    if ":" in identifier:
+        tenant, site_from_id, host = identifier.split(":", 2)
+        site = site or site_from_id
+    else:
+        tenant = identifier
+        host = "wd1"
     site = site or "External"
-    tenant = identifier
-    url = f"https://{tenant}.wd1.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
+    url = f"https://{tenant}.{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
     try:
         data = http_get_json(
             url, headers={"Content-Type": "application/json"},
@@ -164,7 +175,7 @@ def fetch_workday(identifier: str, site: str | None = None, **_) -> list[dict]:
         jobs.append({
             "title": j.get("title", ""),
             "location": j.get("locationsText"),
-            "url": f"https://{tenant}.wd1.myworkdayjobs.com/{site}{j.get('externalPath', '')}",
+            "url": f"https://{tenant}.{host}.myworkdayjobs.com/{site}{j.get('externalPath', '')}",
             "description": "",  # requires a per-job detail call; skipped for cost
         })
     return jobs

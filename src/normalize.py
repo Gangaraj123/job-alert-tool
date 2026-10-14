@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 MAX_DESCRIPTION_CHARS = 4000
 
@@ -23,8 +24,17 @@ def _clean_text(value: str | None) -> str:
     return text
 
 
+def _canonical_url(url: str) -> str:
+    """Drops query string and fragment before hashing, so a tracking param
+    an ATS adds/rotates (?gh_src=..., ?utm_source=..., etc.) doesn't make the
+    same posting hash as a "new" job — the stored/displayed URL keeps the
+    original with params intact; only the hash input is canonicalized."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+
+
 def _stable_id(company: str, title: str, location: str, url: str) -> str:
-    key = f"{company}::{title}::{location}::{url}".lower()
+    key = f"{company}::{title}::{location}::{_canonical_url(url)}".lower()
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 

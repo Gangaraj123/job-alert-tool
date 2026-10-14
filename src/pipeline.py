@@ -15,9 +15,11 @@ from .config import load_config
 from .detector import detect_ats
 from .digest import build_digest_html, send_email_digest
 from .filters import filter_jobs
-from .fetchers import ats_api, jsonld_sitemap
+from .fetchers import ats_api, jsonld_sitemap, playwright_render
 from .fetchers.base import FetchError
+from .link_crawl import find_job_related_links
 from .normalize import normalize_jobs
+from .webutil import domain_from_url, find_career_urls_via_gemini
 
 logger = logging.getLogger("job_alert.pipeline")
 
@@ -54,10 +56,21 @@ def ensure_ats_detected(company: dict, cfg: dict) -> dict:
 
 
 def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str]:
-    """Tries the ATS API, then JSON-LD/sitemap, stopping at the first tier
-    that returns at least one job. Raises FetchError (aggregating all tier
-    errors) if every tier fails — the caller marks the company as broken
-    rather than treating this as fatal for the whole run."""
+    """Tries the ATS API, then JSON-LD/sitemap (which follows pagination),
+    then a rendered-browser pass for JS-only career portals.
+
+    The ATS API tier is authoritative: once we know the right board, a
+    successful call that returns zero jobs means the company genuinely has
+    no open roles right now — that's real signal, not a failure, so it's
+    returned as-is (empty list included) rather than falling through to the
+    next tier. JSON-LD/rendering, by contrast, finding nothing is ambiguous
+    (could just mean "this tier doesn't apply here"), so those tiers only
+    count as a result when they find at least one job — zero there falls
+    through to the next tier instead.
+
+    Raises FetchError (aggregating all tier errors) only if every tier
+    either errors or is ambiguous-empty — the caller marks the company as
+    broken rather than treating this as fatal for the whole run."""
     errors = []
 
     if company.get("ats_type") in ats_api.SUPPORTED:
@@ -65,8 +78,7 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
             jobs = ats_api.fetch(
                 company["ats_type"], company["ats_identifier"], site=company.get("ats_site")
             )
-            if jobs:
-                return jobs, "ats_api"
+            return jobs, "ats_api"  # authoritative: trust it even if empty
         except FetchError as e:
             errors.append(str(e))
 
@@ -74,6 +86,13 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
         jobs = jsonld_sitemap.fetch(company["url"])
         if jobs:
             return jobs, "jsonld_sitemap"
+    except FetchError as e:
+        errors.append(str(e))
+
+    try:
+        jobs = playwright_render.fetch(company["url"])
+        if jobs:
+            return jobs, "playwright_render"
     except FetchError as e:
         errors.append(str(e))
 
@@ -101,6 +120,72 @@ def preview_detect_and_fetch(url: str) -> dict:
             "ok": False, "ats_type": ats_type, "ats_identifier": ats_identifier,
             "tier": None, "job_count": 0, "error": str(e),
         }
+
+
+def discover_career_url(domain: str, company_name: str | None = None) -> dict:
+    """Given just a domain (from the company-name search, not a career page
+    URL), finds and validates the real careers page. AI-first:
+
+    1. Gemini with Google Search grounding — it's actually looking at live
+       web results, not guessing from training data, so it generalizes to
+       arbitrary companies (unlike fixed URL patterns).
+    2. A handful of common URL patterns as a free fallback, used when Gemini
+       isn't configured, is rate-limited, or genuinely finds nothing.
+
+    Every candidate from either tier is validated the same way regardless of
+    source: we actually try fetching jobs from it, never trusted on the
+    model's word — a result only counts as "found" if it returns real
+    postings.
+
+    Returns {found, url, ats_type, tier, job_count, attempted, gemini_status}."""
+    attempted = []
+    seen_domains = {domain}
+
+    gemini = find_career_urls_via_gemini(company_name or domain, domain)
+    for url in gemini["urls"]:
+        candidate_domain = domain_from_url(url)
+        if candidate_domain in seen_domains:
+            continue
+        seen_domains.add(candidate_domain)
+
+        result = preview_detect_and_fetch(url)
+        attempted.append({"url": url, **result})
+        if result["ok"] and result["job_count"] > 0:
+            return {"found": True, "url": url, **result, "attempted": attempted, "gemini_status": gemini["status"]}
+
+    candidates = [
+        f"https://{domain}/careers",
+        f"https://{domain}/jobs",
+        f"https://careers.{domain}",  # many large companies (e.g. Google) use a subdomain
+        f"https://jobs.{domain}",
+        f"https://{domain}",
+    ]
+    for url in candidates:
+        result = preview_detect_and_fetch(url)
+        attempted.append({"url": url, **result})
+        if result["ok"] and result["job_count"] > 0:
+            return {"found": True, "url": url, **result, "attempted": attempted, "gemini_status": gemini["status"]}
+
+    # Last resort: a careers "hub" page (e.g. stripe.com/careers) often has
+    # zero postings itself and links out to the real listing (e.g.
+    # stripe.com/careers/search via a "Search open roles" button). Read the
+    # actual page and follow links that look job-related, instead of
+    # guessing more fixed paths.
+    tried_urls = {a["url"] for a in attempted}
+    hub_candidates = [f"https://{domain}/careers", f"https://{domain}"]
+    link_candidates: list[str] = []
+    for hub in hub_candidates:
+        for link in find_job_related_links(hub):
+            if link not in tried_urls and link not in link_candidates:
+                link_candidates.append(link)
+
+    for url in link_candidates:
+        result = preview_detect_and_fetch(url)
+        attempted.append({"url": url, **result})
+        if result["ok"] and result["job_count"] > 0:
+            return {"found": True, "url": url, **result, "attempted": attempted, "gemini_status": gemini["status"]}
+
+    return {"found": False, "url": None, "attempted": attempted, "gemini_status": gemini["status"]}
 
 
 def run_test_company(name: str) -> None:
@@ -170,12 +255,14 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
             companies_broken += 1
             continue  # per-company error isolation: one bad fetcher never aborts the run
 
-    filtered = filter_jobs(collected, cfg.get("filters", {}))
+    filtered = filter_jobs(collected, db.get_filters())
     new_jobs = [j for j in filtered if not db.job_exists(j["id"])]
     logger.info("%d jobs passed filters, %d are new", len(filtered), len(new_jobs))
 
     for job in new_jobs:
         db.insert_job(job, run_id=run_id)
+    # Every job this run matched, new or already-seen — for full run history.
+    db.record_run_jobs(run_id, [j["id"] for j in filtered])
 
     digest_jobs = db.get_unnotified_jobs()
     broken_companies = [c for c in db.list_companies() if c.get("last_status") == "error"]

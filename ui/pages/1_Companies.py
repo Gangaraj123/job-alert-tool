@@ -4,64 +4,125 @@ from pathlib import Path
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
-from src.pipeline import preview_detect_and_fetch  # noqa: E402
-from src.webutil import favicon_url  # noqa: E402
+from src.pipeline import discover_career_url, preview_detect_and_fetch  # noqa: E402
+from src.webutil import favicon_url, search_companies  # noqa: E402
+from bootstrap import sync_secrets  # noqa: E402
+from style import inject_style, logo_img  # noqa: E402
+
+sync_secrets()
 
 st.set_page_config(page_title="Companies - Job Alert Tool", page_icon="🏢", layout="wide")
+inject_style()
 db.init_schema()
 
-st.title("🏢 Target companies")
-st.caption("Edit the list the daily pipeline scrapes. Changes are picked up by the next scheduled run — no redeploy needed.")
+st.markdown('<div class="hero-kicker">Your watchlist</div>', unsafe_allow_html=True)
+st.title("Companies")
+st.markdown('<div class="hero-copy">Choose the teams you’re interested in. We’ll find their careers pages and check for new roles automatically.</div>', unsafe_allow_html=True)
 
-with st.expander("➕ Add a company", expanded=False):
-    name = st.text_input("Name", key="add_name")
-    url = st.text_input("Career page URL", key="add_url", placeholder="https://example.com/careers")
+with st.expander("＋ Add a company", expanded=not db.list_companies()):
+    picked = st.session_state.get("picked_company")
 
-    if url:
-        st.image(favicon_url(url), width=32)
-
-    col_a, col_b = st.columns([1, 1])
-    if col_a.button("🔍 Detect & preview", disabled=not url):
-        with st.spinner("Detecting ATS and test-fetching jobs…"):
-            st.session_state["add_preview"] = preview_detect_and_fetch(url)
-
-    preview = st.session_state.get("add_preview")
-    if preview:
-        if preview["ok"]:
-            st.success(f"Detected **{preview['ats_type'] or 'no known ATS'}** via `{preview['tier']}` — {preview['job_count']} job(s) found.")
-        else:
-            st.error(f"Every fetch tier failed: {preview['error']}")
-
-    if col_b.button("💾 Save company", type="primary", disabled=not (name and url)):
-        if db.get_company_by_name(name.strip()):
-            st.error(f"A company named '{name}' already exists.")
-        else:
-            company_id = db.add_company(name.strip(), url.strip())
-            if preview and preview["ok"] and preview["ats_type"]:
-                db.update_company(
-                    company_id, ats_type=preview["ats_type"],
-                    ats_identifier=preview["ats_identifier"], ats_detected_at=db._now(),
-                )
-            if preview:
-                db.set_company_run_status(
-                    company_id, "ok" if preview["ok"] else "error",
-                    error=preview.get("error"), job_count=preview.get("job_count"),
-                )
-            st.session_state.pop("add_preview", None)
-            st.success(f"Added {name}.")
+    if picked:
+        # Show the selected company + discovery status right here, at the
+        # top — not below a long results list that needs scrolling past.
+        st.markdown(f"**Selected:** {picked['name']} (`{picked['domain']}`)")
+        if st.button("← Back to search results"):
+            st.session_state.pop("picked_company", None)
+            st.session_state.pop("discovery", None)
             st.rerun()
+
+        if "discovery" not in st.session_state:
+            with st.spinner(f"Finding {picked['name']}'s career page…"):
+                st.session_state["discovery"] = discover_career_url(picked["domain"], picked["name"])
+        discovery = st.session_state["discovery"]
+
+        if discovery["found"]:
+            st.success(
+                f"Found it: `{discovery['url']}` — detected **{discovery['ats_type'] or 'no known ATS, but JSON-LD data found'}** "
+                f"via `{discovery['tier']}`, {discovery['job_count']} job(s)."
+            )
+            if st.button("💾 Save company", type="primary"):
+                name = picked["name"]
+                if db.get_company_by_name(name):
+                    st.error(f"A company named '{name}' already exists.")
+                else:
+                    company_id = db.add_company(name, discovery["url"])
+                    if discovery.get("ats_type"):
+                        db.update_company(
+                            company_id, ats_type=discovery["ats_type"],
+                            ats_identifier=discovery["ats_identifier"], ats_detected_at=db._now(),
+                        )
+                    db.set_company_run_status(company_id, "ok", job_count=discovery["job_count"])
+                    for key in ("picked_company", "discovery", "search_query", "search_results", "searched_query"):
+                        st.session_state.pop(key, None)
+                    st.success(f"Added {name}.")
+                    st.rerun()
+        else:
+            gemini_status = discovery.get("gemini_status")
+            if gemini_status == "rate_limited":
+                st.error("AI search (Gemini) hit its rate limit — falling back to basic pattern guessing only. Try again in a bit, or paste the URL manually below.")
+            elif gemini_status == "not_configured":
+                st.caption("AI search isn't configured (no GEMINI_API_KEY) — only basic pattern guessing was tried.")
+            elif gemini_status == "unavailable":
+                st.caption("AI search was temporarily unavailable — only basic pattern guessing was tried.")
+            st.warning("Couldn't auto-detect a career page for this domain. Paste the exact URL manually below.")
+            manual_url = st.text_input("Career page URL", key="manual_url", placeholder=f"https://{picked['domain']}/careers")
+            if st.button("🔍 Check this URL", disabled=not manual_url):
+                with st.spinner("Checking…"):
+                    result = preview_detect_and_fetch(manual_url)
+                st.session_state["discovery"] = {"found": result["ok"], "url": manual_url, **result, "attempted": []}
+                st.rerun()
+            with st.expander("What was tried automatically"):
+                for a in discovery["attempted"]:
+                    st.caption(f"`{a['url']}` — {'OK' if a['ok'] else a['error']}")
+
+    else:
+        # No separate "Search" button — text_input already commits on Enter
+        # or on losing focus (tab/click away), so typing a name and pressing
+        # Enter (or just clicking elsewhere) re-searches automatically. We
+        # detect a changed, committed query below and re-run the search for
+        # it, showing a spinner for that exact lookup.
+        query = st.text_input("Company name", key="search_query", placeholder="e.g. Stripe (press Enter)")
+
+        query = query.strip()
+        if not query:
+            st.session_state.pop("searched_query", None)
+            st.session_state.pop("search_results", None)
+        elif len(query) >= 2 and query != st.session_state.get("searched_query"):
+            with st.spinner(f"Searching for \"{query}\"…"):
+                st.session_state["search_results"] = search_companies(query)
+            st.session_state["searched_query"] = query
+
+        results = st.session_state.get("search_results", [])
+        if "searched_query" in st.session_state:
+            if not results:
+                st.caption(f"No matches for \"{st.session_state['searched_query']}\" — try a different spelling, or use manual entry below.")
+            for r in results:
+                with st.container(border=True):
+                    row = st.columns([0.6, 4, 1.2])
+                    row[0].markdown(logo_img(r["logo_url"]), unsafe_allow_html=True)
+                    row[1].markdown(
+                        f'<div class="company-row-name">{r["name"]}</div>'
+                        f'<div class="company-row-domain">{r["domain"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if row[2].button("Select", key=f"pick_{r['domain']}", use_container_width=True):
+                        st.session_state["picked_company"] = r
+                        st.session_state.pop("discovery", None)
+                        st.rerun()
 
 companies = db.list_companies()
 if not companies:
-    st.info("No companies yet — add one above, or run `python -m src.main --seed` once to load companies.seed.yaml.")
+    st.info("No companies yet — search for one above.")
 else:
-    st.subheader("All companies")
+    st.subheader(f"Tracked companies · {len(companies)}")
     for c in companies:
         with st.container(border=True):
             cols = st.columns([0.6, 2.5, 3.5, 1.5, 1.5, 0.8])
-            cols[0].image(c.get("logo_url") or favicon_url(c["url"]), width=28)
+            cols[0].markdown(logo_img(c.get("logo_url") or favicon_url(c["url"])), unsafe_allow_html=True)
             cols[1].markdown(f"**{c['name']}**  \n[{c['url']}]({c['url']})")
 
             ats_label = c.get("ats_type") or "not detected"

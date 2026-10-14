@@ -27,6 +27,8 @@ class Settings:
     gmail_app_password: str | None
     digest_to_email: str | None
 
+    gemini_api_key: str | None
+
     raw: dict
 
 
@@ -37,6 +39,7 @@ def load_settings() -> Settings:
         gmail_address=_env("GMAIL_ADDRESS"),
         gmail_app_password=_env("GMAIL_APP_PASSWORD"),
         digest_to_email=_env("DIGEST_TO_EMAIL"),
+        gemini_api_key=_env("GEMINI_API_KEY"),
         raw={},
     )
 

@@ -11,6 +11,7 @@ client — handy for `--test-company` runs and Streamlit local dev.
 """
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -69,7 +70,29 @@ CREATE TABLE IF NOT EXISTS runs (
     new_jobs_count INTEGER DEFAULT 0,
     closed_jobs_count INTEGER DEFAULT 0
 );
+
+-- Every job a run's fetch matched, including ones already in `jobs` from a
+-- previous run — lets run history show "everything this run found" while
+-- the `jobs` table itself stays deduplicated (one row per unique job).
+CREATE TABLE IF NOT EXISTS run_jobs (
+    run_id INTEGER NOT NULL,
+    job_id TEXT NOT NULL,
+    PRIMARY KEY (run_id, job_id)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
+
+DEFAULT_FILTERS = {
+    "roles": ["SDE II", "SDE 2", "Software Engineer II"],
+    "locations": ["remote", "bengaluru", "bangalore", "india"],
+    "experience_terms": [],
+    "always_allow_remote": True,
+}
 
 
 def get_client() -> libsql_client.Client:
@@ -116,7 +139,17 @@ MIGRATIONS = [
 ]
 
 
+_schema_ready = False
+
+
 def init_schema() -> None:
+    """Idempotent, but each statement is a network round-trip to Turso, so
+    guard against re-running this on every Streamlit script rerun (which
+    happens on every click) — that was adding ~15 round-trips of latency to
+    every single page interaction."""
+    global _schema_ready
+    if _schema_ready:
+        return
     client = get_client()
     for statement in [s.strip() for s in SCHEMA.split(";") if s.strip()]:
         client.execute(statement)
@@ -126,6 +159,7 @@ def init_schema() -> None:
         except Exception:
             pass  # column already exists
     _backfill_missing_logo_urls()
+    _schema_ready = True
 
 
 def _backfill_missing_logo_urls() -> None:
@@ -265,25 +299,37 @@ def insert_job(job: dict, run_id: int | None = None) -> None:
 
 def close_stale_jobs(company_id: int, current_job_ids: list[str]) -> int:
     """Marks jobs for this company as closed if they're no longer present
-    in the latest successful fetch, and re-opens any that reappeared.
-    Only call this when the fetch for `company_id` succeeded (non-empty
-    `current_job_ids`) — never on a failed/empty fetch, or every open job
-    for that company would be wrongly marked closed."""
-    if not current_job_ids:
-        return 0
-    client = get_client()
-    placeholders = ", ".join("?" for _ in current_job_ids)
+    in the latest fetch, and re-opens any that reappeared.
 
-    result = client.execute(
-        f"UPDATE jobs SET closed_at = ? WHERE company_id = ? AND closed_at IS NULL "
-        f"AND id NOT IN ({placeholders})",
-        [_now(), company_id, *current_job_ids],
-    )
-    client.execute(
-        f"UPDATE jobs SET closed_at = NULL WHERE company_id = ? AND closed_at IS NOT NULL "
-        f"AND id IN ({placeholders})",
-        [company_id, *current_job_ids],
-    )
+    Only call this with results from a fetch that's trustworthy as a
+    complete picture of what's currently open — the ATS API tier (even
+    with zero results: that's authoritative, not ambiguous), or any tier
+    that returned a non-empty list. Never call this with an empty list from
+    an ambiguous-empty tier (JSON-LD/rendering finding nothing usually means
+    "doesn't apply here", not "zero jobs") or a failed fetch — the caller
+    (pipeline.run_pipeline) enforces that distinction.
+
+    An empty `current_job_ids` here is treated as "authoritatively zero" —
+    i.e. every previously-open job for this company is now closed. This is
+    the caller's responsibility to guarantee, not this function's."""
+    client = get_client()
+    if current_job_ids:
+        placeholders = ", ".join("?" for _ in current_job_ids)
+        result = client.execute(
+            f"UPDATE jobs SET closed_at = ? WHERE company_id = ? AND closed_at IS NULL "
+            f"AND id NOT IN ({placeholders})",
+            [_now(), company_id, *current_job_ids],
+        )
+        client.execute(
+            f"UPDATE jobs SET closed_at = NULL WHERE company_id = ? AND closed_at IS NOT NULL "
+            f"AND id IN ({placeholders})",
+            [company_id, *current_job_ids],
+        )
+    else:
+        result = client.execute(
+            "UPDATE jobs SET closed_at = ? WHERE company_id = ? AND closed_at IS NULL",
+            [_now(), company_id],
+        )
     return result.rows_affected if hasattr(result, "rows_affected") else 0
 
 
@@ -315,10 +361,27 @@ def mark_jobs_notified(job_ids: Iterable[str]) -> None:
     )
 
 
+def count_jobs() -> int:
+    """Cheap row count — avoids pulling full job rows (incl. descriptions)
+    over the network just to show a number on the home page."""
+    client = get_client()
+    res = client.execute("SELECT COUNT(*) as n FROM jobs")
+    return _rows_to_dicts(res)[0]["n"]
+
+
+_JOB_LIST_COLUMNS = (
+    "id, company_id, company_name, title, location, url, description, "
+    "fetch_tier, first_seen_at, notified_at, found_in_run_id, closed_at, done_at"
+)
+
+
 def list_recent_jobs(limit: int = 300) -> list[dict]:
+    # Explicit column list (not SELECT *) to skip legacy unused columns
+    # (fit_score etc., kept in the schema for backward compatibility) and
+    # keep the payload over the network smaller.
     client = get_client()
     res = client.execute(
-        "SELECT * FROM jobs ORDER BY first_seen_at DESC LIMIT ?", [limit]
+        f"SELECT {_JOB_LIST_COLUMNS} FROM jobs ORDER BY first_seen_at DESC LIMIT ?", [limit]
     )
     return _rows_to_dicts(res)
 
@@ -361,12 +424,51 @@ def list_runs(limit: int = 20) -> list[dict]:
     return _rows_to_dicts(res)
 
 
+def record_run_jobs(run_id: int, job_ids: list[str]) -> None:
+    """Records every job a run's fetch matched (new or already-seen), so
+    run history can show the full snapshot of what that run found — the
+    `jobs` table itself stays deduplicated regardless."""
+    client = get_client()
+    for job_id in job_ids:
+        client.execute(
+            "INSERT INTO run_jobs (run_id, job_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+            [run_id, job_id],
+        )
+
+
 def list_jobs_for_run(run_id: int) -> list[dict]:
     client = get_client()
     res = client.execute(
-        "SELECT * FROM jobs WHERE found_in_run_id = ? ORDER BY company_name, title", [run_id]
+        "SELECT jobs.* FROM jobs JOIN run_jobs ON jobs.id = run_jobs.job_id "
+        "WHERE run_jobs.run_id = ? ORDER BY jobs.company_name, jobs.title",
+        [run_id],
     )
     return _rows_to_dicts(res)
+
+
+# --- Filters (roles/locations/experience) --------------------------------
+
+def get_filters() -> dict:
+    """Role/location/experience filter used to pre-filter fetched jobs.
+    Editable from the UI (Filters page) — defaults to SDE II on first read
+    if nothing's been saved yet, same seed-on-first-access pattern as other
+    settings in this app."""
+    client = get_client()
+    res = client.execute("SELECT value FROM settings WHERE key = 'filters'")
+    rows = _rows_to_dicts(res)
+    if rows:
+        return json.loads(rows[0]["value"])
+    set_filters(DEFAULT_FILTERS)
+    return dict(DEFAULT_FILTERS)
+
+
+def set_filters(filters: dict) -> None:
+    client = get_client()
+    client.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('filters', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        [json.dumps(filters), _now()],
+    )
 
 
 def _now() -> str:

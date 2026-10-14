@@ -13,41 +13,47 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
 from src.pipeline import run_pipeline  # noqa: E402
+from bootstrap import sync_secrets  # noqa: E402
+from style import inject_style  # noqa: E402
 
-# On Streamlit Cloud, secrets come from st.secrets rather than a local .env.
-# Mirror them into os.environ so src/config.py (which reads env vars) picks
-# them up transparently, whether running locally or hosted.
-import os  # noqa: E402
+sync_secrets()
 
-for key in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"):
-    if key in st.secrets and key not in os.environ:
-        os.environ[key] = st.secrets[key]
-
-st.set_page_config(page_title="Job Alert Tool", page_icon="📋", layout="wide")
+st.set_page_config(page_title="Job Alert Tool", page_icon="📋", layout="wide", initial_sidebar_state="expanded")
+inject_style()
 
 db.init_schema()
 
-st.title("📋 Job Alert Tool")
-st.caption("Edit target companies and review scraped jobs. Runs automatically via GitHub Actions daily, or trigger one below.")
 
-companies = db.list_companies()
-jobs = db.list_recent_jobs(limit=1000)
+@st.cache_data(ttl=15)
+def _overview_data():
+    return db.list_companies(), db.count_jobs()
+
+
+st.markdown('<div class="hero-kicker">Your career search, organized</div>', unsafe_allow_html=True)
+st.title("Job search dashboard")
+st.markdown('<div class="hero-copy">Track the companies you care about and keep new opportunities in one calm, searchable place.</div>', unsafe_allow_html=True)
+
+companies, job_count = _overview_data()
 
 enabled = [c for c in companies if c["enabled"]]
 errored = [c for c in companies if c.get("last_status") == "error"]
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Companies tracked", len(companies))
-col2.metric("Enabled", len(enabled))
-col3.metric("Jobs seen (last 1000)", len(jobs))
-col4.metric("Fetchers currently broken", len(errored))
+col1.metric("Companies tracked", len(companies), help="All companies in your watchlist")
+col2.metric("Actively monitored", len(enabled))
+col3.metric("Jobs discovered", job_count)
+col4.metric("Needs attention", len(errored), delta="Check companies" if errored else "All systems clear", delta_color="inverse" if errored else "normal")
 
 st.divider()
 
-send_email = st.checkbox("Send email digest if this run finds anything new", value=False)
-if st.button("▶️ Run now", type="primary"):
+st.subheader("Refresh your watchlist")
+st.caption("Runs also happen automatically every day. Start one now to check for the latest openings.")
+run_col, mail_col = st.columns([1.25, 3])
+send_email = mail_col.checkbox("Email me a digest if new jobs are found", value=False)
+if run_col.button("Run check now", type="primary", use_container_width=True):
     with st.spinner("Fetching every enabled company… this can take a minute."):
         stats = run_pipeline(dry_run=not send_email, triggered_by="ui")
+    _overview_data.clear()
     st.success(
         f"Done in {stats['duration_seconds']:.1f}s — "
         f"{stats['companies_ok']}/{stats['companies_checked']} companies OK, "
@@ -61,7 +67,8 @@ if st.button("▶️ Run now", type="primary"):
     st.rerun()
 
 st.divider()
-st.subheader("Run history")
+st.subheader("Recent activity")
+st.caption("A history of company checks and newly discovered roles.")
 
 runs = db.list_runs(limit=20)
 if not runs:

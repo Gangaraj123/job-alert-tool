@@ -1,26 +1,6 @@
-# Tuning knobs for the pipeline. The company list itself lives in the DB (edit it
-# via the Streamlit UI) — this file is everything else.
-
-filters:
-  # A job passes the pre-filter if its title+description contains ANY of these
-  # (case-insensitive substring match). Empty list = no keyword filtering.
-  keywords:
-    - "founding engineer"
-    - "staff engineer"
-    - "backend"
-    - "full stack"
-    - "platform engineer"
-    - "infrastructure"
-  # A job passes if its location contains ANY of these, OR is remote-friendly.
-  # Empty list = no location filtering.
-  locations:
-    - "remote"
-    - "bengaluru"
-    - "bangalore"
-    - "india"
-  # If true, a job whose location string contains "remote" always passes the
-  # location filter even if it doesn't match the list above.
-  always_allow_remote: true
+# Tuning knobs for the pipeline. The company list AND the role/location
+# filters live in the DB (edit them via the Streamlit UI) — this file is
+# everything else.
 
 fetch:
   request_timeout_seconds: 20
@@ -30,6 +10,12 @@ fetch:
   ats_cache_ttl_days: 14
   # Sitemap discovery tier: cap how many candidate job URLs it will visit.
   max_sitemap_urls: 25
+
+discovery:
+  # Used only by the "Add company" career-page discovery in the UI, as a
+  # fallback after plain URL-pattern guessing fails. Needs GEMINI_API_KEY —
+  # without it, discovery just uses the pattern guesses.
+  gemini_model: gemini-3.8-flash
 
 logging:
   level: INFO

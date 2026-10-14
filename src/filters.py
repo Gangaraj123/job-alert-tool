@@ -1,5 +1,6 @@
-"""Cheap pre-filter applied before any AI scoring, to avoid spending Claude
-tokens on obviously irrelevant postings."""
+"""Cheap pre-filter on role/location, applied before a job is stored. Filter
+values come from db.get_filters() — editable from the UI's Filters page,
+defaulting to SDE II."""
 from __future__ import annotations
 
 
@@ -9,7 +10,7 @@ def _matches_any(haystack: str, needles: list[str]) -> bool:
 
 
 def passes_filters(job: dict, filters_cfg: dict) -> bool:
-    keywords = filters_cfg.get("keywords") or []
+    keywords = [*(filters_cfg.get("roles") or []), *(filters_cfg.get("experience_terms") or [])]
     locations = filters_cfg.get("locations") or []
     always_allow_remote = filters_cfg.get("always_allow_remote", True)
 

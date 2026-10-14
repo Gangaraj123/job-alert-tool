@@ -23,6 +23,7 @@ _cfg = load_config().get("fetch", {})
 MAX_SITEMAP_URLS = _cfg.get("max_sitemap_urls", 25)
 
 _JOB_PATH_HINT = re.compile(r"/(job|career|position|opening)s?/", re.IGNORECASE)
+MAX_PAGINATION_PAGES = _cfg.get("max_pagination_pages", 5)
 
 
 def _extract_jobpostings_from_html(html: str, page_url: str) -> list[dict]:
@@ -90,6 +91,25 @@ def _discover_sitemap_job_urls(base_url: str) -> list[str]:
     return []
 
 
+def _find_next_page_url(html: str, page_url: str) -> str | None:
+    """Follows an explicit rel="next" link, or a "Next" button/link, so
+    listings that paginate server-side (page=2, page=3, ...) aren't missed —
+    capped by MAX_PAGINATION_PAGES in fetch()."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    link_next = soup.find("link", rel="next")
+    if link_next and link_next.get("href"):
+        return urljoin(page_url, link_next["href"])
+
+    for a in soup.find_all("a", href=True):
+        text = a.get_text(" ", strip=True).lower()
+        rel = " ".join(a.get("rel", [])).lower()
+        aria = (a.get("aria-label") or "").lower()
+        if text in ("next", "next page", "»", "›") or "next" in rel or "next" in aria:
+            return urljoin(page_url, a["href"])
+    return None
+
+
 def fetch(career_page_url: str, **_) -> list[dict]:
     try:
         resp = http_get(career_page_url)
@@ -97,8 +117,25 @@ def fetch(career_page_url: str, **_) -> list[dict]:
         raise FetchError(f"jsonld_sitemap: could not fetch {career_page_url}: {e}") from e
 
     jobs = _extract_jobpostings_from_html(resp.text, career_page_url)
+
+    # Follow pagination (page=2, page=3, ...) if this is a server-rendered
+    # paginated listing — bounded so a broken "next" loop can't run forever.
+    next_url = _find_next_page_url(resp.text, career_page_url)
+    visited = {career_page_url}
+    pages_followed = 0
+    while next_url and next_url not in visited and pages_followed < MAX_PAGINATION_PAGES:
+        visited.add(next_url)
+        try:
+            page = http_get(next_url)
+        except Exception as e:
+            logger.debug("pagination: stopping at %s (%s)", next_url, e)
+            break
+        jobs.extend(_extract_jobpostings_from_html(page.text, next_url))
+        next_url = _find_next_page_url(page.text, next_url)
+        pages_followed += 1
+
     if jobs:
-        logger.info("jsonld: found %d JobPosting entries on career page", len(jobs))
+        logger.info("jsonld: found %d JobPosting entries on career page (%d page(s))", len(jobs), pages_followed + 1)
         return jobs
 
     # Fallback: crawl a bounded set of sitemap URLs that look like job pages

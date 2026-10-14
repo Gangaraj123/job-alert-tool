@@ -23,16 +23,27 @@ PATTERNS: list[tuple[str, re.Pattern]] = [
     ("ashby", re.compile(r"jobs\.ashbyhq\.com/(?P<slug>[\w-]+)")),
     ("workable", re.compile(r"apply\.workable\.com/(?P<slug>[\w-]+)")),
     ("smartrecruiters", re.compile(r"careers\.smartrecruiters\.com/(?P<slug>[\w-]+)")),
-    ("workday", re.compile(r"(?P<slug>[\w-]+)\.(?:wd\d+|myworkdayjobs)\.com/(?:en-US/)?(?P<site>[\w-]+)")),
+    ("workday", re.compile(r"(?P<slug>[\w-]+)\.(?P<host>wd\d+|myworkdayjobs)\.com/(?:en-US/)?(?P<site>[\w-]+)")),
     ("recruitee", re.compile(r"(?P<slug>[\w-]+)\.recruitee\.com")),
 ]
+
+
+def _identifier_from_match(ats_type: str, m: re.Match) -> str:
+    if ats_type == "workday":
+        # Workday needs tenant + site + host variant (wd1/wd3/...) to build
+        # correct URLs — encoded into one identifier string so the (ats_type,
+        # identifier) 2-tuple contract stays the same for every other ATS
+        # and every call site. ats_api.fetch_workday parses this back apart.
+        groups = m.groupdict()
+        return f"{groups['slug']}:{groups.get('site', 'External')}:{groups.get('host', 'wd1')}"
+    return m.group("slug")
 
 
 def detect_from_url(url: str) -> tuple[str, str] | None:
     for ats_type, pattern in PATTERNS:
         m = pattern.search(url)
         if m:
-            return ats_type, m.group("slug")
+            return ats_type, _identifier_from_match(ats_type, m)
     return None
 
 
@@ -40,7 +51,7 @@ def detect_from_html(html: str) -> tuple[str, str] | None:
     for ats_type, pattern in PATTERNS:
         m = pattern.search(html)
         if m:
-            return ats_type, m.group("slug")
+            return ats_type, _identifier_from_match(ats_type, m)
     return None
 
 
