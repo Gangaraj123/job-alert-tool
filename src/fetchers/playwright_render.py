@@ -81,7 +81,16 @@ def _extract_via_ai(page_text: str, page_url: str) -> list[dict]:
         return []
 
     prompt = EXTRACTION_PROMPT.format(page_url=page_url, page_text=page_text[:MAX_PAGE_TEXT_CHARS])
-    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=20)
+    # Measured: successful calls typically take 17-21s for a ~12k char page,
+    # so a 20s timeout was cutting it right at the edge — any minor latency
+    # spike caused an intermittent, hard-to-reproduce failure. One retry on
+    # top of the longer timeout, since content extraction itself has proven
+    # reliable (verified 3/3 against Google's page) — it's specifically
+    # transient network timeouts worth retrying, not a real failure mode.
+    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
+    if status != 200:
+        logger.info("ai_extract: first attempt failed (status %s), retrying once", status)
+        status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
     if status != 200:
         return []
 
