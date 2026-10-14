@@ -8,6 +8,7 @@ different fetch tiers produce slightly different raw shapes.
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 
 MAX_DESCRIPTION_CHARS = 4000
@@ -16,7 +17,8 @@ MAX_DESCRIPTION_CHARS = 4000
 def _clean_text(value: str | None) -> str:
     if not value:
         return ""
-    text = re.sub(r"<[^>]+>", " ", value)  # strip HTML tags if present
+    text = html.unescape(value)  # some APIs double-escape entities (&lt;div&gt; etc.)
+    text = re.sub(r"<[^>]+>", " ", text)  # strip HTML tags if present
     text = re.sub(r"\s+", " ", text).strip()
     return text
 

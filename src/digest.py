@@ -1,105 +1,72 @@
-"""Builds the daily digest message and sends it via Telegram, chunked to
-respect Telegram's 4096-char message limit."""
+"""Builds the daily digest and emails it via Gmail SMTP.
+
+No AI ranking — jobs are grouped by company in the order they were found,
+listing everything that passed the keyword/location pre-filter in filters.py.
+"""
 from __future__ import annotations
 
 import logging
-
-import requests
+import smtplib
+from collections import defaultdict
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 from .config import load_settings
 
 logger = logging.getLogger("job_alert.digest")
 
-TELEGRAM_MAX_CHARS = 4096
-PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
-PRIORITY_EMOJI = {"high": "\U0001F7E2", "medium": "\U0001F7E1", "low": "\U000026AA"}
 
-
-def build_digest_text(jobs: list[dict], broken_companies: list[dict]) -> str:
+def build_digest_html(jobs: list[dict], broken_companies: list[dict]) -> str:
     if not jobs and not broken_companies:
         return ""
 
-    lines = ["*Daily Job Digest*", ""]
+    by_company: dict[str, list[dict]] = defaultdict(list)
+    for j in jobs:
+        by_company[j["company_name"]].append(j)
 
-    jobs_sorted = sorted(
-        jobs,
-        key=lambda j: (PRIORITY_ORDER.get(j.get("priority", "low"), 2), -(j.get("fit_score") or 0)),
-    )
+    parts = [f"<h2>Daily Job Digest — {len(jobs)} new job(s)</h2>"]
 
-    by_priority: dict[str, list[dict]] = {"high": [], "medium": [], "low": []}
-    for j in jobs_sorted:
-        by_priority.setdefault(j.get("priority", "low"), []).append(j)
-
-    for priority in ("high", "medium", "low"):
-        group = by_priority.get(priority, [])
-        if not group:
-            continue
-        emoji = PRIORITY_EMOJI.get(priority, "")
-        lines.append(f"{emoji} *{priority.upper()} PRIORITY* ({len(group)})")
-        for j in group:
-            lines.append(
-                f"• [{_escape(j['title'])} @ {_escape(j['company_name'])}]({j['url']}) "
-                f"— score {j.get('fit_score')}"
+    for company, company_jobs in sorted(by_company.items()):
+        parts.append(f"<h3>{_escape(company)} ({len(company_jobs)})</h3><ul>")
+        for j in company_jobs:
+            location = f" — {_escape(j['location'])}" if j.get("location") else ""
+            parts.append(
+                f'<li><a href="{j["url"]}">{_escape(j["title"])}</a>{location}</li>'
             )
-            if j.get("why_it_fits"):
-                lines.append(f"  _{_escape(j['why_it_fits'])}_")
-            if j.get("red_flags"):
-                lines.append(f"  ⚠️ {_escape(j['red_flags'])}")
-        lines.append("")
+        parts.append("</ul>")
 
     if broken_companies:
-        lines.append("⚠️ *Broken fetchers*")
+        parts.append("<h3>⚠️ Broken fetchers</h3><ul>")
         for c in broken_companies:
-            lines.append(f"• {_escape(c['name'])}: {_escape(c.get('last_error') or 'unknown error')}")
-        lines.append("")
+            parts.append(f"<li><b>{_escape(c['name'])}</b>: {_escape(c.get('last_error') or 'unknown error')}</li>")
+        parts.append("</ul>")
 
-    return "\n".join(lines).strip()
+    return "\n".join(parts)
 
 
 def _escape(text: str) -> str:
-    # Minimal Markdown V1 escaping for Telegram (avoid breaking on literal _ * [ ])
-    for ch in ("_", "*", "["):
-        text = text.replace(ch, f"\\{ch}")
-    return text
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _chunk_text(text: str, max_chars: int = TELEGRAM_MAX_CHARS) -> list[str]:
-    if len(text) <= max_chars:
-        return [text]
-    chunks, current = [], ""
-    for line in text.split("\n"):
-        if len(current) + len(line) + 1 > max_chars:
-            chunks.append(current)
-            current = line
-        else:
-            current = f"{current}\n{line}" if current else line
-    if current:
-        chunks.append(current)
-    return chunks
-
-
-def send_telegram_message(text: str) -> bool:
+def send_email_digest(html_body: str, job_count: int) -> bool:
     settings = load_settings()
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
-        logger.warning("Telegram not configured (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID missing); skipping send")
+    if not settings.gmail_address or not settings.gmail_app_password:
+        logger.warning("Email not configured (GMAIL_ADDRESS/GMAIL_APP_PASSWORD missing); skipping send")
         return False
 
-    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
-    ok = True
-    for chunk in _chunk_text(text):
-        try:
-            resp = requests.post(
-                url,
-                json={
-                    "chat_id": settings.telegram_chat_id,
-                    "text": chunk,
-                    "parse_mode": "Markdown",
-                    "disable_web_page_preview": True,
-                },
-                timeout=15,
-            )
-            resp.raise_for_status()
-        except Exception as e:
-            logger.error("Failed to send Telegram message chunk: %s", e)
-            ok = False
-    return ok
+    to_addr = settings.digest_to_email or settings.gmail_address
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Job Alert Digest — {job_count} new job(s)"
+    msg["From"] = settings.gmail_address
+    msg["To"] = to_addr
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
+            server.login(settings.gmail_address, settings.gmail_app_password)
+            server.sendmail(settings.gmail_address, [to_addr], msg.as_string())
+        return True
+    except Exception as e:
+        logger.error("Failed to send digest email: %s", e)
+        return False

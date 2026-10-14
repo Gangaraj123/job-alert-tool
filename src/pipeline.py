@@ -1,8 +1,10 @@
 """Orchestrates one full run: detect ATS -> tiered fetch -> normalize ->
-filter -> dedupe -> score -> digest -> notify.
+filter -> dedupe -> email digest.
 
 Every company is processed inside its own try/except so one broken fetcher
-never aborts the run for the rest ("per-company error isolation").
+never aborts the run for the rest ("per-company error isolation"). Companies
+with no known ATS and no JSON-LD data just show up in the digest's "broken
+fetchers" section for manual checking — there's no AI fallback tier.
 """
 from __future__ import annotations
 
@@ -11,16 +13,13 @@ import logging
 from . import db
 from .config import load_config
 from .detector import detect_ats
-from .digest import build_digest_text, send_telegram_message
+from .digest import build_digest_html, send_email_digest
 from .filters import filter_jobs
-from .fetchers import ats_api, jsonld_sitemap, playwright_ai
+from .fetchers import ats_api, jsonld_sitemap
 from .fetchers.base import FetchError
 from .normalize import normalize_jobs
-from .scorer import score_jobs
 
 logger = logging.getLogger("job_alert.pipeline")
-
-ATS_CACHE_TTL_DAYS = None  # loaded from config at call time
 
 
 def _ats_is_stale(company: dict, ttl_days: int) -> bool:
@@ -55,9 +54,10 @@ def ensure_ats_detected(company: dict, cfg: dict) -> dict:
 
 
 def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str]:
-    """Tries ATS API, then JSON-LD/sitemap, then Playwright+AI, in that
-    order, stopping at the first tier that returns at least one job.
-    Raises FetchError (aggregating all tier errors) if every tier fails."""
+    """Tries the ATS API, then JSON-LD/sitemap, stopping at the first tier
+    that returns at least one job. Raises FetchError (aggregating all tier
+    errors) if every tier fails — the caller marks the company as broken
+    rather than treating this as fatal for the whole run."""
     errors = []
 
     if company.get("ats_type") in ats_api.SUPPORTED:
@@ -74,13 +74,6 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
         jobs = jsonld_sitemap.fetch(company["url"])
         if jobs:
             return jobs, "jsonld_sitemap"
-    except FetchError as e:
-        errors.append(str(e))
-
-    try:
-        jobs = playwright_ai.fetch(company["url"])
-        if jobs:
-            return jobs, "playwright_ai"
     except FetchError as e:
         errors.append(str(e))
 
@@ -119,7 +112,6 @@ def run_test_company(name: str) -> None:
         logger.error("No company named %r in the DB. Add it via the UI or --seed first.", name)
         return
 
-    cfg = load_config()
     print(f"\n=== Testing {company['name']} ({company['url']}) ===\n")
 
     detected = detect_ats(company["url"])
@@ -136,27 +128,29 @@ def run_test_company(name: str) -> None:
     try:
         jobs = jsonld_sitemap.fetch(company["url"])
         print(f"[jsonld_sitemap] OK — {len(jobs)} job(s)")
-    except FetchError as e:
-        print(f"[jsonld_sitemap] FAILED — {e}")
-
-    try:
-        jobs = playwright_ai.fetch(company["url"])
-        print(f"[playwright_ai] OK — {len(jobs)} job(s)")
         for j in jobs[:5]:
             print(f"    - {j['title']} ({j.get('location')})")
     except FetchError as e:
-        print(f"[playwright_ai] FAILED — {e}")
+        print(f"[jsonld_sitemap] FAILED — {e}")
 
     print()
 
 
-def run_pipeline(dry_run: bool = False, no_telegram: bool = False) -> None:
+def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: str = "cron") -> dict:
+    """Runs one full pass. Returns a stats dict (also persisted as a row in
+    the `runs` table) so the UI can show run history and per-run results."""
+    import time as _time
+
     db.init_schema()
     cfg = load_config()
     companies = db.list_companies(enabled_only=True)
     logger.info("Running pipeline for %d enabled companies", len(companies))
 
+    run_id = db.create_run(triggered_by=triggered_by)
+    started = _time.monotonic()
+
     collected: list[dict] = []
+    companies_ok = companies_broken = closed_jobs_count = 0
 
     for company in companies:
         try:
@@ -167,10 +161,13 @@ def run_pipeline(dry_run: bool = False, no_telegram: bool = False) -> None:
                 j["company_id"] = company["id"]
             collected.extend(normalized)
             db.set_company_run_status(company["id"], "ok", job_count=len(normalized))
+            closed_jobs_count += db.close_stale_jobs(company["id"], [j["id"] for j in normalized])
+            companies_ok += 1
             logger.info("%s: %d job(s) via %s", company["name"], len(normalized), tier)
         except Exception as e:
             logger.error("%s: FAILED — %s", company["name"], e)
             db.set_company_run_status(company["id"], "error", error=str(e))
+            companies_broken += 1
             continue  # per-company error isolation: one bad fetcher never aborts the run
 
     filtered = filter_jobs(collected, cfg.get("filters", {}))
@@ -178,33 +175,39 @@ def run_pipeline(dry_run: bool = False, no_telegram: bool = False) -> None:
     logger.info("%d jobs passed filters, %d are new", len(filtered), len(new_jobs))
 
     for job in new_jobs:
-        db.insert_job(job)
+        db.insert_job(job, run_id=run_id)
 
-    scored = score_jobs(new_jobs)
-    for job, score, error in scored:
-        if score:
-            db.update_job_score(
-                job["id"], score["fit_score"], score["why_it_fits"],
-                score["gaps"], score["red_flags"], score["priority"],
-            )
-        else:
-            logger.warning("Could not score %s (%s): %s", job["id"], job["title"], error)
-
-    min_score = cfg.get("scoring", {}).get("min_fit_score_for_digest", 60)
-    digest_jobs = db.get_unnotified_scored_jobs(min_score)
+    digest_jobs = db.get_unnotified_jobs()
     broken_companies = [c for c in db.list_companies() if c.get("last_status") == "error"]
 
-    digest_text = build_digest_text(digest_jobs, broken_companies)
-    if not digest_text:
-        logger.info("Nothing to notify about today.")
-        return
-
-    if dry_run or no_telegram:
-        logger.info("Dry run / Telegram disabled — digest below:\n%s", digest_text)
-        return
-
-    if send_telegram_message(digest_text):
-        db.mark_jobs_notified([j["id"] for j in digest_jobs])
-        logger.info("Digest sent and %d job(s) marked notified", len(digest_jobs))
+    html = build_digest_html(digest_jobs, broken_companies)
+    email_sent = False
+    if html and not (dry_run or no_email):
+        email_sent = send_email_digest(html, len(digest_jobs))
+        if email_sent:
+            db.mark_jobs_notified([j["id"] for j in digest_jobs])
+            logger.info("Digest emailed and %d job(s) marked notified", len(digest_jobs))
+        else:
+            logger.error("Digest send failed — jobs left unnotified for retry on next run")
+    elif html:
+        logger.info("Dry run / email disabled — %d job(s) would be in today's digest", len(digest_jobs))
     else:
-        logger.error("Digest send failed — jobs left unnotified for retry on next run")
+        logger.info("Nothing to notify about today.")
+
+    duration = _time.monotonic() - started
+    db.finish_run(
+        run_id, duration, len(companies), companies_ok, companies_broken,
+        len(new_jobs), closed_jobs_count,
+    )
+
+    return {
+        "run_id": run_id,
+        "duration_seconds": duration,
+        "companies_checked": len(companies),
+        "companies_ok": companies_ok,
+        "companies_broken": companies_broken,
+        "new_jobs_count": len(new_jobs),
+        "closed_jobs_count": closed_jobs_count,
+        "email_sent": email_sent,
+        "new_jobs": new_jobs,
+    }

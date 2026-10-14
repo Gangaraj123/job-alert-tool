@@ -61,7 +61,7 @@ else:
     for c in companies:
         with st.container(border=True):
             cols = st.columns([0.6, 2.5, 3.5, 1.5, 1.5, 0.8])
-            cols[0].image(favicon_url(c["url"]), width=28)
+            cols[0].image(c.get("logo_url") or favicon_url(c["url"]), width=28)
             cols[1].markdown(f"**{c['name']}**  \n[{c['url']}]({c['url']})")
 
             ats_label = c.get("ats_type") or "not detected"
@@ -93,7 +93,10 @@ else:
             with cols[5].popover("⚙️"):
                 new_url = st.text_input("Career page URL", value=c["url"], key=f"url_{c['id']}")
                 if st.button("Save URL", key=f"save_{c['id']}"):
-                    db.update_company(c["id"], url=new_url, ats_type=None, ats_identifier=None, ats_detected_at=None)
+                    db.update_company(
+                        c["id"], url=new_url, logo_url=favicon_url(new_url),
+                        ats_type=None, ats_identifier=None, ats_detected_at=None,
+                    )
                     st.success("Updated — click Re-check to re-detect.")
                     st.rerun()
                 st.divider()

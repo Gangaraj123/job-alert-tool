@@ -23,9 +23,9 @@ class Settings:
     turso_database_url: str | None
     turso_auth_token: str | None
 
-    anthropic_api_key: str | None
-    telegram_bot_token: str | None
-    telegram_chat_id: str | None
+    gmail_address: str | None
+    gmail_app_password: str | None
+    digest_to_email: str | None
 
     raw: dict
 
@@ -34,9 +34,9 @@ def load_settings() -> Settings:
     return Settings(
         turso_database_url=_env("TURSO_DATABASE_URL"),
         turso_auth_token=_env("TURSO_AUTH_TOKEN"),
-        anthropic_api_key=_env("ANTHROPIC_API_KEY"),
-        telegram_bot_token=_env("TELEGRAM_BOT_TOKEN"),
-        telegram_chat_id=_env("TELEGRAM_CHAT_ID"),
+        gmail_address=_env("GMAIL_ADDRESS"),
+        gmail_app_password=_env("GMAIL_APP_PASSWORD"),
+        digest_to_email=_env("DIGEST_TO_EMAIL"),
         raw={},
     )
 
@@ -45,11 +45,6 @@ def load_config(path: Path | None = None) -> dict:
     path = path or (ROOT_DIR / "config.yaml")
     with open(path, "r") as f:
         return yaml.safe_load(f)
-
-
-def load_profile(path: Path | None = None) -> str:
-    path = path or (ROOT_DIR / "profile.md")
-    return path.read_text()
 
 
 def load_seed_companies(path: Path | None = None) -> list[dict]:
