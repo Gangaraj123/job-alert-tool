@@ -87,6 +87,29 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
     raise FetchError("; ".join(errors) if errors else "all tiers returned zero jobs")
 
 
+def preview_detect_and_fetch(url: str) -> dict:
+    """Runs detection + the tiered fetch against a bare URL that may not be
+    in the DB yet (used by the UI's "Add company" preview and the
+    "Re-check now" button). Returns a dict the UI can render directly:
+    {ok, ats_type, ats_identifier, tier, job_count, error}."""
+    cfg = load_config()
+    detected = detect_ats(url)
+    ats_type, ats_identifier = detected if detected else (None, None)
+    company_like = {"url": url, "ats_type": ats_type, "ats_identifier": ats_identifier}
+
+    try:
+        jobs, tier = fetch_company_jobs_tiered(company_like, cfg)
+        return {
+            "ok": True, "ats_type": ats_type, "ats_identifier": ats_identifier,
+            "tier": tier, "job_count": len(jobs), "error": None,
+        }
+    except FetchError as e:
+        return {
+            "ok": False, "ats_type": ats_type, "ats_identifier": ats_identifier,
+            "tier": None, "job_count": 0, "error": str(e),
+        }
+
+
 def run_test_company(name: str) -> None:
     """Debug helper: runs every tier independently (does not stop at first
     success) and prints per-tier results. Does not write anything to the DB."""
