@@ -66,7 +66,7 @@ with st.expander("＋ Add a company", expanded=not db.list_companies()):
                     st.rerun()
         else:
             if discovery.get("timed_out"):
-                st.error("Discovery took too long (45s budget) and was stopped partway through — some candidates below weren't tried. Paste the URL manually, or try again.")
+                st.error("Discovery took too long (90s budget) and was stopped partway through — some candidates below weren't tried. Paste the URL manually, or try again.")
             gemini_status = discovery.get("gemini_status")
             if gemini_status == "rate_limited":
                 st.error("AI search (Gemini) hit its rate limit — falling back to basic pattern guessing only. Try again in a bit, or paste the URL manually below.")

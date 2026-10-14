@@ -90,6 +90,9 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
         errors.append(str(e))
 
     try:
+        # Renders once; tries structured data first, then (if that's empty)
+        # AI reading of the same rendered page's visible text — see
+        # playwright_render.py for why both live in one tier.
         jobs = playwright_render.fetch(company["url"])
         if jobs:
             return jobs, "playwright_render"
@@ -125,7 +128,7 @@ def preview_detect_and_fetch(url: str) -> dict:
 def discover_career_url(
     domain: str,
     company_name: str | None = None,
-    max_seconds: float = 45,
+    max_seconds: float = 90,
     on_progress=None,
 ) -> dict:
     """Given just a domain (from the company-name search, not a career page
@@ -156,6 +159,9 @@ def discover_career_url(
 
     started = _time.monotonic()
     attempted = []
+    tried_urls: set[str] = set()  # exact-URL dedup across ALL tiers — a URL
+    # guessed by patterns that Gemini already suggested (or vice versa) must
+    # never be fetched twice; each attempt costs real seconds of the budget.
     seen_domains = {domain}
 
     def _out_of_time() -> bool:
@@ -166,6 +172,9 @@ def discover_career_url(
             on_progress(msg)
 
     def _try(url: str, gemini_status: str) -> dict | None:
+        if url in tried_urls:
+            return None
+        tried_urls.add(url)
         _progress(f"Checking {url}…")
         result = preview_detect_and_fetch(url)
         attempted.append({"url": url, **result})
@@ -175,7 +184,12 @@ def discover_career_url(
         return None
 
     _progress("Asking Gemini for likely career page URLs…")
-    gemini = find_career_urls_via_gemini(company_name or domain, domain)
+    # Each candidate's full validation chain got more thorough (and thus
+    # slower) once the render tier gained an AI-extraction fallback, so only
+    # the single most likely Gemini suggestion is tried — trying fewer
+    # candidates more thoroughly fits the time budget better than trying
+    # many candidates shallowly.
+    gemini = find_career_urls_via_gemini(company_name or domain, domain, count=1)
 
     for url in gemini["urls"]:
         if _out_of_time():
@@ -207,7 +221,6 @@ def discover_career_url(
     # stripe.com/careers/search via a "Search open roles" button). Read the
     # actual page and follow links that look job-related, instead of
     # guessing more fixed paths.
-    tried_urls = {a["url"] for a in attempted}
     hub_candidates = [f"https://{domain}/careers", f"https://{domain}"]
     link_candidates: list[str] = []
     for hub in hub_candidates:
@@ -258,6 +271,14 @@ def run_test_company(name: str) -> None:
             print(f"    - {j['title']} ({j.get('location')})")
     except FetchError as e:
         print(f"[jsonld_sitemap] FAILED — {e}")
+
+    try:
+        jobs = playwright_render.fetch(company["url"])
+        print(f"[playwright_render] OK — {len(jobs)} job(s)")
+        for j in jobs[:5]:
+            print(f"    - {j['title']} ({j.get('location')})")
+    except FetchError as e:
+        print(f"[playwright_render] FAILED — {e}")
 
     print()
 

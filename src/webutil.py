@@ -227,7 +227,7 @@ def find_career_urls_via_gemini(company_name: str, domain: str, count: int = 3) 
         f"no markdown, just the URLs."
     )
 
-    status, data = _call_gemini(prompt, use_search_grounding=True, timeout=15)
+    status, data = _call_gemini(prompt, use_search_grounding=True, timeout=25)
     if status == 429:
         logger.warning("Gemini rate limit/quota hit for %s", company_name)
         return {"status": "rate_limited", "urls": []}
