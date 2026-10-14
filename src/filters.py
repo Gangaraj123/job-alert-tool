@@ -1,6 +1,5 @@
 """Cheap pre-filter on role/location, applied before a job is stored. Filter
-values come from db.get_filters() — editable from the UI's Filters page,
-defaulting to SDE II."""
+values come from db.get_filters() — editable from the UI's Filters page."""
 from __future__ import annotations
 
 
@@ -12,7 +11,13 @@ def _matches_any(haystack: str, needles: list[str]) -> bool:
 def passes_filters(job: dict, filters_cfg: dict) -> bool:
     keywords = [*(filters_cfg.get("roles") or []), *(filters_cfg.get("experience_terms") or [])]
     locations = filters_cfg.get("locations") or []
+    exclude_terms = filters_cfg.get("exclude_terms") or []
     always_allow_remote = filters_cfg.get("always_allow_remote", True)
+
+    # Checked on the title only — a description mentioning "collaborate with
+    # senior engineers" shouldn't reject an otherwise-matching junior role.
+    if exclude_terms and _matches_any(job.get("title", ""), exclude_terms):
+        return False
 
     if keywords:
         text = f"{job.get('title', '')} {job.get('description', '')}"

@@ -18,9 +18,9 @@ db.init_schema()
 
 st.title("🎯 Role & location filters")
 st.caption(
-    "A job only gets stored if its title/description matches one of your roles (or experience terms), "
-    "and its location matches your location list (or is remote, if allowed below). "
-    "Changes apply to the next run — no redeploy needed."
+    "A job gets stored only if its title/description matches one of your roles (or experience terms), "
+    "its title doesn't match any excluded term, and its location matches your list (or is remote, if "
+    "allowed below). Changes apply to the next run — no redeploy needed."
 )
 
 filters = db.get_filters()
@@ -38,11 +38,20 @@ col1, col2 = st.columns(2)
 with col1:
     roles = _tag_list_input(
         "Target roles", "roles_input", filters.get("roles", []),
-        help="E.g. \"SDE II\", \"Software Engineer II\", \"Backend Engineer\". One per line.",
+        help="E.g. \"software engineer\", \"backend engineer\". Keep these level-agnostic "
+             "(no \"II\"/\"Senior\") — use Exclude below to cap seniority instead.",
     )
     experience_terms = _tag_list_input(
         "Experience terms (optional)", "experience_input", filters.get("experience_terms", []),
-        help="E.g. \"3-5 years\", \"mid-level\". Matched the same way as roles — leave empty to skip.",
+        help="E.g. \"0-3 years\", \"mid-level\" — only helps for postings that happen to state an "
+             "exact range; most don't, so Exclude below is the more reliable lever.",
+    )
+    exclude_terms = _tag_list_input(
+        "Exclude (seniority/title terms)", "exclude_input", filters.get("exclude_terms", []),
+        help="A job is rejected if its TITLE contains any of these, regardless of role match. "
+             "This is the reliable way to cap seniority (e.g. \"up to ~3 years\") — postings phrase "
+             "exact year-ranges too inconsistently to match on text, but words like \"Senior\"/\"Staff\" "
+             "are consistent.",
     )
 
 with col2:
@@ -59,6 +68,7 @@ if st.button("💾 Save filters", type="primary"):
     db.set_filters({
         "roles": roles,
         "experience_terms": experience_terms,
+        "exclude_terms": exclude_terms,
         "locations": locations,
         "always_allow_remote": always_allow_remote,
     })

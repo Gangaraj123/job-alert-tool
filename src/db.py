@@ -88,9 +88,18 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 DEFAULT_FILTERS = {
-    "roles": ["SDE II", "SDE 2", "Software Engineer II"],
+    # No "II"/level suffix — real postings rarely use Google-style leveling,
+    # so a bare "software engineer" catches "Software Engineer", "Senior
+    # Software Engineer", "Software Engineer II", etc. all at once; the
+    # exclude_terms below are what actually keeps seniority in check.
+    "roles": ["software engineer", "sde", "backend engineer", "full stack engineer"],
     "locations": ["remote", "bengaluru", "bangalore", "india"],
     "experience_terms": [],
+    # A job is rejected if its title contains ANY of these, regardless of
+    # role/location match — the reliable way to cap seniority (~3 years),
+    # since postings phrase exact year-ranges too inconsistently to match
+    # on text reliably, but title seniority words are consistent.
+    "exclude_terms": ["senior", "staff", "principal", "lead", "director", "vp", "head of", "manager"],
     "always_allow_remote": True,
 }
 
