@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
 from src.pipeline import discover_career_url, preview_detect_and_fetch  # noqa: E402
-from src.webutil import favicon_url, search_companies  # noqa: E402
+from src.webutil import favicon_url, rerank_company_matches, search_companies  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from style import inject_style, logo_img  # noqa: E402
 
@@ -93,7 +93,8 @@ with st.expander("＋ Add a company", expanded=not db.list_companies()):
             st.session_state.pop("search_results", None)
         elif len(query) >= 2 and query != st.session_state.get("searched_query"):
             with st.spinner(f"Searching for \"{query}\"…"):
-                st.session_state["search_results"] = search_companies(query)
+                raw_results = search_companies(query)
+                st.session_state["search_results"] = rerank_company_matches(query, raw_results)
             st.session_state["searched_query"] = query
 
         results = st.session_state.get("search_results", [])

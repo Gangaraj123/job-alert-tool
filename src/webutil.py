@@ -63,6 +63,59 @@ def search_companies(query: str, limit: int = 8) -> list[dict]:
     return out
 
 
+def rerank_company_matches(query: str, results: list[dict]) -> list[dict]:
+    """Clearbit's autocomplete matches on substrings, so searching "Google"
+    also surfaces unrelated product/spin-off sites (Chrome Enterprise,
+    Google Domains, ...) that nobody means when adding a company to track
+    for job postings. Asks Gemini (no search grounding needed — this is pure
+    reasoning over a list we already have, not a factual lookup, so there's
+    no hallucination-about-the-world risk) which of the already-fetched
+    results is/are the actual company meant.
+
+    This only affects what's shown to pick from — it's not relied on for
+    correctness. If it fails, is rate-limited, or isn't configured, the
+    original unfiltered list is returned as-is."""
+    settings = load_settings()
+    if not settings.gemini_api_key or len(results) <= 1:
+        return results
+
+    numbered = "\n".join(f"{i}. {r['name']} ({r['domain']})" for i, r in enumerate(results))
+    prompt = (
+        f"A user searched for the company \"{query}\" to track its job postings. "
+        f"Here are name-matching results from a fuzzy company search:\n{numbered}\n\n"
+        f"Some of these may be unrelated sub-brands, product pages, or spin-offs that "
+        f"nobody means when they say they want to track \"{query}\" for jobs (e.g. searching "
+        f"\"Google\" shouldn't also suggest Chrome Enterprise or Google Domains as separate "
+        f"companies to track). Respond with ONLY the numbers (from the list above) of the "
+        f"result(s) that are genuinely the company \"{query}\" itself or its main job-postings "
+        f"entity, comma-separated, most likely first. No commentary."
+    )
+
+    model = load_config().get("discovery", {}).get("gemini_model", "gemini-3.8-flash")
+    try:
+        resp = requests.post(
+            GEMINI_URL_TEMPLATE.format(model=model),
+            params={"key": settings.gemini_api_key},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return results
+        data = resp.json()
+        text = "".join(
+            part.get("text", "")
+            for candidate in data.get("candidates", [])
+            for part in candidate.get("content", {}).get("parts", [])
+        )
+        indices = [int(n) for n in re.findall(r"\d+", text)]
+    except Exception as e:
+        logger.warning("Gemini result reranking failed (showing unfiltered list): %s", e)
+        return results
+
+    picked = [results[i] for i in indices if 0 <= i < len(results)]
+    return picked or results
+
+
 def find_career_urls_via_gemini(company_name: str, domain: str, count: int = 3) -> dict:
     """Asks Gemini (with Google Search grounding, so it's actually looking
     at live web results, not guessing from training data) for likely
