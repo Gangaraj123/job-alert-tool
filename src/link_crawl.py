@@ -11,15 +11,26 @@ candidate in pipeline.discover_career_url — we never trust that a link
 """
 from __future__ import annotations
 
+import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from .fetchers.base import FetchError, http_get
 
-_JOB_LINK_HINTS = (
-    "job", "career", "opening", "position", "role", "vacanc",
-    "search", "open-roles", "openroles", "view-all", "see-all",
+# Matched against the link's PATH only (not query string) — a bare "search"
+# or "job" hint matched against the whole href+text used to sweep up
+# unrelated links on large sites (Microsoft's homepage: site search, Bing
+# translate, news search all contain "search" somewhere). Path segments are
+# far more specific than loose substrings.
+_PATH_HINT = re.compile(r"/(jobs?|careers?|openings?|vacanc\w*)(/|$)", re.IGNORECASE)
+
+# Matched against the visible link TEXT — multi-word phrases only, so a
+# generic "Search" button elsewhere on the page can't match.
+_TEXT_HINT = re.compile(
+    r"(open roles?|open positions?|search jobs?|job search|view openings?|"
+    r"see openings?|current openings?|job openings?|browse jobs?|all jobs?)",
+    re.IGNORECASE,
 )
 
 
@@ -39,9 +50,9 @@ def find_job_related_links(page_url: str, limit: int = 8) -> list[str]:
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
 
-        text = a.get_text(" ", strip=True).lower()
-        haystack = f"{href.lower()} {text}"
-        if not any(hint in haystack for hint in _JOB_LINK_HINTS):
+        text = a.get_text(" ", strip=True)
+        path = urlparse(urljoin(page_url, href)).path
+        if not (_PATH_HINT.search(path) or _TEXT_HINT.search(text)):
             continue
 
         absolute = urljoin(page_url, href)

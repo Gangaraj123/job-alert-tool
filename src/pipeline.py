@@ -206,16 +206,18 @@ def discover_career_url(
     # whose own site blocks us (bot-protection WAFs block plain HTTP *and*
     # headless-browser requests alike) but who still have a wide-open board
     # hosted on the ATS's infrastructure instead of theirs.
+    #
+    # Run alongside the Gemini discovery call (independent I/O, no reason to
+    # make one wait for the other) — when guess_board fails, as it does for
+    # any company without a standard ATS, that's ~5s that would otherwise be
+    # pure dead time before Gemini even starts.
+    import concurrent.futures as _cf
+
+    guess_future = None
     if company_name:
         _progress("Checking for a direct ATS board under the company name…")
-        guessed = ats_api.guess_board(company_name, domain)
-        if guessed:
-            ats_type, slug, board_url, jobs = guessed
-            attempted.append({"url": board_url, "ok": True, "ats_type": ats_type,
-                               "ats_identifier": slug, "tier": "ats_api", "job_count": len(jobs), "error": None})
-            return {"found": True, "url": board_url, "ok": True, "ats_type": ats_type,
-                     "ats_identifier": slug, "tier": "ats_api", "job_count": len(jobs),
-                     "attempted": attempted, "gemini_status": "not_tried", "timed_out": False}
+        executor = _cf.ThreadPoolExecutor(max_workers=1)
+        guess_future = executor.submit(ats_api.guess_board, company_name, domain)
 
     _progress("Asking Gemini for likely career page URLs…")
     # Each candidate's full validation chain got more thorough (and thus
@@ -224,6 +226,17 @@ def discover_career_url(
     # candidates more thoroughly fits the time budget better than trying
     # many candidates shallowly.
     gemini = find_career_urls_via_gemini(company_name or domain, domain, count=1)
+
+    if guess_future:
+        guessed = guess_future.result()
+        executor.shutdown(wait=False)
+        if guessed:
+            ats_type, slug, board_url, jobs = guessed
+            attempted.append({"url": board_url, "ok": True, "ats_type": ats_type,
+                               "ats_identifier": slug, "tier": "ats_api", "job_count": len(jobs), "error": None})
+            return {"found": True, "url": board_url, "ok": True, "ats_type": ats_type,
+                     "ats_identifier": slug, "tier": "ats_api", "job_count": len(jobs),
+                     "attempted": attempted, "gemini_status": gemini["status"], "timed_out": False}
 
     for url in gemini["urls"]:
         if _out_of_time():
