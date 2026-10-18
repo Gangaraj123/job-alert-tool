@@ -1,165 +1,292 @@
-"""Shared visual system on top of .streamlit/config.toml. Call inject_style()
-once near the top of every page.
+"""Shared visual system.
 
-Palette: warm paper background (not stark white) with a single confident
-accent — deep emerald ("moss") for primary actions/progress, warm terracotta
-("clay") reserved for things that need attention, so the two never compete.
-Type: Manrope for headings (geometric, confident), Inter for body/data
-(clean at small sizes) — distinct enough to read as a deliberate pairing.
+Direction: this is a tool you open daily to triage a job hunt — closer in
+spirit to an inbox or a dev tool than to a landing page. So: cool neutral
+surfaces, a strong typographic hierarchy, dense-but-breathable rows, and
+exactly one accent colour doing the work. Amber is reserved strictly for
+"something needs your attention" so it never competes with the accent.
+
+Deliberately avoided: the warm-cream/serif/terracotta combination, uniform
+rounded cards with identical shadows, tracked-out ALL-CAPS eyebrow labels,
+and metadata rendered as middle-dot-joined strings — all of which read as
+generic template defaults rather than decisions.
 """
 import streamlit as st
 
 _CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
 :root {
-    --paper: #F6F4EF;
-    --surface: #FFFFFF;
-    --ink: #161A14;
-    --moss: #1F6F4F;
-    --moss-deep: #124D36;
-    --moss-tint: #E7F1EC;
-    --clay: #C2553A;
-    --clay-tint: #FBEAE5;
-    --slate: #6B7280;
-    --line: #E7E3D9;
+    --canvas:      #FAFAFB;
+    --surface:     #FFFFFF;
+    --ink:         #15161A;
+    --muted:       #6B7280;
+    --line:        #E6E7EB;
+    --line-strong: #D3D5DA;
+
+    --accent:      #4F46E5;
+    --accent-deep: #3730A3;
+    --accent-soft: #EEF2FF;
+
+    --ok:          #047857;
+    --ok-soft:     #ECFDF5;
+    --warn:        #B45309;
+    --warn-soft:   #FFFBEB;
+    --danger:      #B91C1C;
+    --danger-soft: #FEF2F2;
+
+    --r-sm: 6px;
+    --r-md: 10px;
 }
 
-html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
-    background-color: var(--paper) !important;
+/* ---------- Foundations ---------- */
+
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stHeader"] {
+    background-color: var(--canvas) !important;
+}
+
+body, p, div, span, label, li, input, textarea {
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    color: var(--ink);
 }
 
 h1, h2, h3, h4 {
-    font-family: 'Manrope', sans-serif !important;
+    font-family: 'Space Grotesk', system-ui, sans-serif !important;
     color: var(--ink);
-    letter-spacing: -0.01em;
-    font-weight: 700;
-}
-
-body, p, div, span, label, li {
-    font-family: 'Inter', sans-serif;
-    color: var(--ink);
-}
-
-/* De-emphasize the generic tracked-caps "eyebrow" treatment where present */
-.hero-kicker {
-    text-transform: none !important;
-    letter-spacing: 0 !important;
-    font-size: 0.85rem !important;
-    color: var(--moss) !important;
+    letter-spacing: -0.02em;
     font-weight: 600;
-    font-family: 'Inter', sans-serif;
 }
-.hero-copy {
-    color: var(--slate);
-    font-size: 1.02rem;
-    max-width: 62ch;
+h1 { font-size: 1.9rem !important; line-height: 1.15; }
+h2 { font-size: 1.35rem !important; }
+h3 { font-size: 1.05rem !important; }
+
+/* Page intro: a plain lead paragraph, not an eyebrow + hero stack */
+.lead {
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.55;
+    max-width: 68ch;
+    margin: -0.25rem 0 0.5rem;
 }
 
-/* Cards: subtle warm border, no generic grey drop-shadow-everywhere */
+a, a:visited { color: var(--accent-deep); text-decoration-thickness: 1px; }
+
+/* Visible keyboard focus everywhere (Streamlit's default is faint) */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+    outline: 2px solid var(--accent) !important;
+    outline-offset: 2px !important;
+    border-radius: var(--r-sm);
+}
+
+/* ---------- Sidebar ---------- */
+
+[data-testid="stSidebar"] {
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+}
+[data-testid="stSidebar"] > div { padding-top: 0.5rem; }
+
+/* Replaced by the custom nav in ui/nav.py — Streamlit's default renders a
+   bare list of filenames with no hierarchy, icons, or active state. */
+[data-testid="stSidebarNav"] { display: none; }
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.3rem 0.25rem 0.9rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid var(--line);
+}
+.brand-mark {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    display: grid; place-items: center;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700; font-size: 0.95rem;
+    flex: 0 0 auto;
+}
+.brand-name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600; font-size: 0.98rem; line-height: 1.1;
+}
+.brand-sub { color: var(--muted); font-size: 0.73rem; }
+
+/* st.page_link styled as real nav items with a clear active state */
+[data-testid="stSidebar"] [data-testid="stPageLink"] a {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.5rem 0.65rem;
+    margin: 0.12rem 0;
+    border-radius: var(--r-sm);
+    color: var(--ink) !important;
+    font-size: 0.92rem;
+    font-weight: 500;
+    text-decoration: none !important;
+    transition: background-color .12s ease;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a:hover {
+    background: var(--accent-soft);
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"][aria-current="page"] a,
+[data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"] {
+    background: var(--accent-soft);
+    color: var(--accent-deep) !important;
+    font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav-section {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.9rem 0.65rem 0.3rem;
+}
+
+/* ---------- Cards / rows ---------- */
+
 div[data-testid="stContainer"] > div[data-testid="stVerticalBlockBorderWrapper"] {
     background: var(--surface);
     border: 1px solid var(--line) !important;
-    border-radius: 12px;
-    transition: border-color 0.15s ease;
+    border-radius: var(--r-md);
+    transition: border-color .12s ease;
 }
 div[data-testid="stContainer"] > div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-    border-color: var(--moss) !important;
+    border-color: var(--line-strong) !important;
 }
 
-/* Metric tiles: colored left accent instead of flat grey boxes */
+/* ---------- Metrics ---------- */
+
 div[data-testid="stMetric"] {
     background: var(--surface);
-    border-radius: 10px;
-    padding: 14px 18px;
     border: 1px solid var(--line);
-    border-left: 4px solid var(--moss);
+    border-radius: var(--r-md);
+    padding: 0.85rem 1rem;
 }
-div[data-testid="stMetric"] label {
-    color: var(--slate) !important;
+div[data-testid="stMetric"] label p {
+    color: var(--muted) !important;
+    font-size: 0.78rem !important;
     font-weight: 500;
 }
 div[data-testid="stMetricValue"] {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.75rem !important;
     color: var(--ink) !important;
-    font-family: 'Manrope', sans-serif;
 }
-/* "Needs attention" style metrics use delta_color="inverse" — recolor that
-   pill to our clay accent instead of the washed default pink, with real
-   contrast (dark text on a tinted chip, not light-on-light). */
-div[data-testid="stMetricDelta"] {
-    background: var(--clay-tint);
-    border-radius: 6px;
-    padding: 2px 8px;
-    display: inline-block;
-}
-div[data-testid="stMetricDelta"] div {
-    color: var(--clay) !important;
-}
+div[data-testid="stMetricDelta"] { font-size: 0.75rem; }
 
-/* Primary button: solid, high-contrast, real hover state */
+/* ---------- Buttons ---------- */
+
 button[kind="primary"] {
-    background-color: var(--moss) !important;
-    border-color: var(--moss) !important;
-    color: #FFFFFF !important;
-    border-radius: 8px;
+    background: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+    border-radius: var(--r-sm) !important;
     font-weight: 600;
 }
 button[kind="primary"]:hover {
-    background-color: var(--moss-deep) !important;
-    border-color: var(--moss-deep) !important;
+    background: var(--accent-deep) !important;
+    border-color: var(--accent-deep) !important;
 }
-button[kind="primary"] p {
-    color: #FFFFFF !important;
-}
+button[kind="primary"] p { color: #FFFFFF !important; }
 
 button[kind="secondary"] {
-    border-radius: 8px;
-    border-color: var(--line) !important;
+    border-radius: var(--r-sm) !important;
+    border: 1px solid var(--line-strong) !important;
+    background: var(--surface) !important;
+    font-weight: 500;
+}
+button[kind="secondary"]:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent-deep) !important;
 }
 
-a, a:visited {
-    color: var(--moss-deep);
+/* ---------- Status chips (replaces "a · b · c" meta strings) ---------- */
+
+.chip {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.14rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
 }
+.chip-ok      { background: var(--ok-soft);     color: var(--ok); }
+.chip-warn    { background: var(--warn-soft);   color: var(--warn); }
+.chip-danger  { background: var(--danger-soft); color: var(--danger); }
+.chip-neutral { background: #F3F4F6;            color: var(--muted); }
+.chip-accent  { background: var(--accent-soft); color: var(--accent-deep); }
+
+.meta {
+    color: var(--muted);
+    font-size: 0.8rem;
+    line-height: 1.6;
+}
+.meta b { color: var(--ink); font-weight: 600; }
+
+/* ---------- Company / job rows ---------- */
 
 img.company-logo {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    object-fit: cover;
+    width: 30px; height: 30px;
+    border-radius: 7px;
+    object-fit: contain;
     border: 1px solid var(--line);
     background: var(--surface);
-    vertical-align: middle;
+    padding: 2px;
 }
-.company-row-name {
+.row-title {
+    font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
-    font-size: 0.95rem;
-    color: var(--ink);
+    font-size: 0.97rem;
+    line-height: 1.3;
 }
-.company-row-domain {
-    color: var(--slate);
+.row-sub {
+    color: var(--muted);
     font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-family: ui-monospace, 'SFMono-Regular', monospace;
+    word-break: break-all;
 }
 
-/* --- Mobile: stack side-by-side columns, keep touch targets comfortable --- */
+/* Wide content must scroll inside itself, never the page body */
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+    overflow-x: auto;
+}
+
+/* ---------- Mobile ---------- */
+
 @media (max-width: 640px) {
     .block-container {
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
+        padding: 1rem 0.9rem 3rem !important;
     }
-    div[data-testid="stHorizontalBlock"] {
-        flex-wrap: wrap !important;
-    }
+    h1 { font-size: 1.5rem !important; }
+    h2 { font-size: 1.2rem !important; }
+    .lead { font-size: 0.94rem; }
+
+    /* Streamlit keeps columns side-by-side at any width, which squeezes
+       6-column rows into unreadable slivers on a phone. Stack them. */
+    div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.4rem !important; }
     div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
         min-width: 100% !important;
         flex: 1 1 100% !important;
     }
-    button {
-        min-height: 44px;
-    }
-    h1 { font-size: 1.6rem !important; }
-    h2 { font-size: 1.3rem !important; }
+
+    /* Comfortable touch targets */
+    button, [role="button"] { min-height: 44px; }
+    div[data-testid="stMetric"] { padding: 0.7rem 0.8rem; }
+    div[data-testid="stMetricValue"] { font-size: 1.4rem !important; }
+}
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
 }
 </style>
 """
@@ -169,7 +296,14 @@ def inject_style() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-def logo_img(url: str, size: int = 32) -> str:
-    """Returns an <img> tag with the circular company-logo styling, for use
-    inside st.markdown(..., unsafe_allow_html=True)."""
-    return f'<img class="company-logo" src="{url}" width="{size}" height="{size}">'
+def logo_img(url: str, size: int = 30) -> str:
+    """<img> with the shared company-logo styling, for use inside
+    st.markdown(..., unsafe_allow_html=True)."""
+    return f'<img class="company-logo" src="{url}" width="{size}" height="{size}" alt="">'
+
+
+def chip(label: str, kind: str = "neutral") -> str:
+    """A small status pill. Replaces the middle-dot-joined metadata strings
+    ("cron · 0 new · 1 broken") that made every row read as one grey blur
+    with no visual priority."""
+    return f'<span class="chip chip-{kind}">{label}</span>'

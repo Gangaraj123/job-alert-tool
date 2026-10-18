@@ -8,19 +8,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
+from nav import render_sidebar  # noqa: E402
 from style import inject_style  # noqa: E402
 
 sync_secrets()
 
-st.set_page_config(page_title="Filters - Job Alert Tool", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Filters · Job Alerts", page_icon="🎯", layout="wide")
 inject_style()
 db.init_schema()
+render_sidebar()
 
-st.title("🎯 Role & location filters")
-st.caption(
-    "A job gets stored only if its title/description matches one of your roles (or experience terms), "
-    "its title doesn't match any excluded term, and its location matches your list (or is remote, if "
-    "allowed below). Changes apply to the next run — no redeploy needed."
+st.title("Filters")
+st.markdown(
+    '<p class="lead">A role is kept only if it matches one of your target roles, '
+    "isn't excluded by title, and is in an allowed location. Changes apply to the "
+    "next check.</p>",
+    unsafe_allow_html=True,
 )
 
 filters = db.get_filters()

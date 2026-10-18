@@ -9,18 +9,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
-from style import inject_style  # noqa: E402
+from nav import render_sidebar  # noqa: E402
+from style import chip, inject_style  # noqa: E402
 from timeutil import to_ist  # noqa: E402
 
 sync_secrets()
 
-st.set_page_config(page_title="Jobs - Job Alert Tool", page_icon="💼", layout="wide")
+st.set_page_config(page_title="Jobs · Job Alerts", page_icon="💼", layout="wide")
 inject_style()
 db.init_schema()
+render_sidebar()
 
-st.markdown('<div class="hero-kicker">Opportunity inbox</div>', unsafe_allow_html=True)
-st.title("Your jobs")
-st.markdown('<div class="hero-copy">Every role found across your watchlist. Save your focus by marking roles done as you review them.</div>', unsafe_allow_html=True)
+st.title("Jobs")
+st.markdown(
+    '<p class="lead">Every role found across your watchlist. Roles that disappear '
+    "from a company's listings are marked closed automatically.</p>",
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_data(ttl=15)
 def _recent_jobs():
@@ -29,7 +35,7 @@ def _recent_jobs():
 
 jobs = _recent_jobs()
 if not jobs:
-    st.info("No jobs scraped yet. Run the pipeline (`python -m src.main`, or the Run now button on the home page).")
+    st.info("No roles found yet. Start a check from the Overview page.")
     st.stop()
 
 df = pd.DataFrame(jobs)
@@ -58,21 +64,30 @@ if search:
 
 filtered = filtered.sort_values(by=["is_closed", "first_seen_at"], ascending=[True, False])
 
-st.caption(f"Showing {len(filtered)} of {len(df)} opportunities")
+st.caption(f"Showing {len(filtered)} of {len(df)} roles")
 
 if filtered.empty:
-    st.info("No jobs match these filters. Try changing your search or showing closed roles.")
+    st.info("No roles match these filters. Try a different search, or show closed roles.")
 else:
     for _, job in filtered.iterrows():
         with st.container(border=True):
             left, action = st.columns([5, 1])
             title = str(job.get("title") or "Untitled role")
             company = str(job.get("company_name") or "Company")
-            location = str(job.get("location") or "Location not specified")
-            seen = to_ist(job.get("first_seen_at"))
-            badges = " · ".join(x for x in ["Closed" if job["is_closed"] else "Open", "Done" if job["done"] else ""] if x)
-            left.markdown(f"**{title}**  \n{company} · {location}  \n<small>{badges} · Found {seen}</small>", unsafe_allow_html=True)
-            action.link_button("View role ↗", str(job["url"]), use_container_width=True)
+            location = str(job.get("location") or "Location not stated")
+
+            badges = [chip("Closed", "warn") if job["is_closed"] else chip("Open", "ok")]
+            if job["done"]:
+                badges.append(chip("Done", "neutral"))
+
+            left.markdown(
+                f'<div class="row-title">{title}</div>'
+                f'<div class="meta"><b>{company}</b> — {location}</div>'
+                + " ".join(badges)
+                + f'<span class="meta">&nbsp; Found {to_ist(job.get("first_seen_at"))}</span>',
+                unsafe_allow_html=True,
+            )
+            action.link_button("Open", str(job["url"]), use_container_width=True)
             checked = st.checkbox("Mark as done", value=bool(job["done"]), key=f"done_{job['id']}")
             if checked != bool(job["done"]):
                 db.mark_job_done(job["id"], checked)
@@ -80,11 +95,11 @@ else:
                 st.rerun()
 
 st.divider()
-with st.expander("⚠️ Danger zone"):
-    st.caption("This doesn't affect your companies, filters, or run history — only the jobs themselves. "
-               "Re-running the pipeline will re-discover anything still actually posted.")
-    confirm_jobs = st.checkbox("I'm sure — delete all jobs", key="confirm_clear_jobs")
-    if st.button("🗑️ Clear all jobs", disabled=not confirm_jobs):
+with st.expander("Danger zone"):
+    st.caption("Affects only saved roles — your companies, filters and run history are untouched. "
+               "The next check re-discovers anything still posted.")
+    confirm_jobs = st.checkbox("Yes, delete all roles", key="confirm_clear_jobs")
+    if st.button("Clear all roles", disabled=not confirm_jobs):
         db.clear_jobs()
         _recent_jobs.clear()
         st.success("All jobs cleared.")

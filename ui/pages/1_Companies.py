@@ -10,20 +10,25 @@ from src import db  # noqa: E402
 from src.pipeline import discover_career_url, preview_detect_and_fetch  # noqa: E402
 from src.webutil import favicon_url, rerank_company_matches, search_companies  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
-from style import inject_style, logo_img  # noqa: E402
+from nav import render_sidebar  # noqa: E402
+from style import chip, inject_style, logo_img  # noqa: E402
 from timeutil import to_ist  # noqa: E402
 
 sync_secrets()
 
-st.set_page_config(page_title="Companies - Job Alert Tool", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="Companies · Job Alerts", page_icon="🏢", layout="wide")
 inject_style()
 db.init_schema()
+render_sidebar()
 
-st.markdown('<div class="hero-kicker">Your watchlist</div>', unsafe_allow_html=True)
 st.title("Companies")
-st.markdown('<div class="hero-copy">Choose the teams you’re interested in. We’ll find their careers pages and check for new roles automatically.</div>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="lead">Search for a company by name — its careers page is found and '
+    "verified automatically, then checked for new roles every day.</p>",
+    unsafe_allow_html=True,
+)
 
-with st.expander("＋ Add a company", expanded=not db.list_companies()):
+with st.expander("Add a company", expanded=not db.list_companies()):
     picked = st.session_state.get("picked_company")
 
     if picked:
@@ -115,8 +120,8 @@ with st.expander("＋ Add a company", expanded=not db.list_companies()):
                     row = st.columns([0.6, 4, 1.2])
                     row[0].markdown(logo_img(r["logo_url"]), unsafe_allow_html=True)
                     row[1].markdown(
-                        f'<div class="company-row-name">{r["name"]}</div>'
-                        f'<div class="company-row-domain">{r["domain"]}</div>',
+                        f'<div class="row-title">{r["name"]}</div>'
+                        f'<div class="row-sub">{r["domain"]}</div>',
                         unsafe_allow_html=True,
                     )
                     if row[2].button("Select", key=f"pick_{r['domain']}", use_container_width=True):
@@ -128,30 +133,39 @@ companies = db.list_companies()
 if not companies:
     st.info("No companies yet — search for one above.")
 else:
-    st.subheader(f"Tracked companies · {len(companies)}")
+    st.subheader(f"Tracked companies ({len(companies)})")
     for c in companies:
         with st.container(border=True):
-            cols = st.columns([0.6, 2.5, 3.5, 1.5, 1.5, 0.8])
+            cols = st.columns([0.5, 3, 3, 1.3, 1.3, 0.7])
             cols[0].markdown(logo_img(c.get("logo_url") or favicon_url(c["url"])), unsafe_allow_html=True)
-            cols[1].markdown(f"**{c['name']}**  \n[{c['url']}]({c['url']})")
+            cols[1].markdown(
+                f'<div class="row-title">{c["name"]}</div>'
+                f'<div class="row-sub"><a href="{c["url"]}">{c["url"]}</a></div>',
+                unsafe_allow_html=True,
+            )
 
-            ats_label = c.get("ats_type") or "not detected"
             status = c.get("last_status") or "never run"
-            status_icon = {"ok": "🟢", "error": "🔴"}.get(status, "⚪")
+            status_kind = {"ok": "ok", "error": "danger"}.get(status, "neutral")
+            status_text = {"ok": "healthy", "error": "failing"}.get(status, "never run")
+            chips = [chip(status_text, status_kind)]
+            if c.get("ats_type"):
+                chips.append(chip(c["ats_type"], "accent"))
+            chips.append(chip(f"{c.get('last_job_count') or 0} roles", "neutral"))
+
             cols[2].markdown(
-                f"ATS: `{ats_label}`  \n"
-                f"{status_icon} {status} · last checked: {to_ist(c.get('last_checked_at'))}  \n"
-                f"jobs last run: {c.get('last_job_count') or 0}"
+                " ".join(chips)
+                + f'<div class="meta">Checked {to_ist(c.get("last_checked_at"))}</div>',
+                unsafe_allow_html=True,
             )
             if c.get("last_error"):
-                cols[2].caption(f"⚠️ {c['last_error']}")
+                cols[2].caption(str(c["last_error"])[:160])
 
-            new_enabled = cols[3].toggle("Enabled", value=bool(c["enabled"]), key=f"enabled_{c['id']}")
+            new_enabled = cols[3].toggle("Active", value=bool(c["enabled"]), key=f"enabled_{c['id']}")
             if new_enabled != bool(c["enabled"]):
                 db.update_company(c["id"], enabled=1 if new_enabled else 0)
                 st.rerun()
 
-            if cols[4].button("🔍 Re-check", key=f"recheck_{c['id']}", help="Detect ATS and test-fetch right now"):
+            if cols[4].button("Re-check", key=f"recheck_{c['id']}", help="Detect the ATS and test-fetch right now", use_container_width=True):
                 with st.spinner(f"Checking {c['name']}…"):
                     result = preview_detect_and_fetch(c["url"])
                 db.set_company_run_status(
