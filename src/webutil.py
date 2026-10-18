@@ -110,27 +110,27 @@ def _vertex_access_token() -> str | None:
 
 
 def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 15) -> tuple[int, dict]:
-    """Calls Gemini via Vertex AI if configured, else the AI Studio key.
+    """Calls Gemini via the AI Studio key if configured, else Vertex AI.
     Returns (http_status_code, parsed_json_body) — 0 as the status means the
     request itself failed to even complete (network error, bad credentials,
     etc.), distinct from a real HTTP error status."""
     settings = load_settings()
     model = load_config().get("discovery", {}).get("gemini_model", "gemini-2.5-flash")
     tools = [{"googleSearch": {}}] if use_search_grounding else None
+    token = None
 
-    token = _vertex_access_token()
-    if token:
-        url = VERTEX_URL_TEMPLATE.format(
-            location=settings.vertex_location, project=settings.vertex_project, model=model
-        )
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        params = {}
-    elif settings.gemini_api_key:
+    if settings.gemini_api_key:
         url = AI_STUDIO_URL_TEMPLATE.format(model=model)
         headers = {}
         params = {"key": settings.gemini_api_key}
         # AI Studio's tool schema uses snake_case, unlike Vertex's camelCase.
         tools = [{"google_search": {}}] if use_search_grounding else None
+    elif (token := _vertex_access_token()):
+        url = VERTEX_URL_TEMPLATE.format(
+            location=settings.vertex_location, project=settings.vertex_project, model=model
+        )
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        params = {}
     else:
         return 0, {}
 
@@ -158,14 +158,26 @@ def _extract_text(data: dict) -> str:
     )
 
 
-def matches_experience_level(title: str, description: str, min_years: int = 2, max_years: int = 4) -> bool:
-    """AI-judges whether a job's ACTUAL requirements correspond to roughly
-    min_years-max_years of professional software/IT experience (SDE-2
-    equivalent) — based on the description content, not the job title and
-    explicitly NOT the specific tech stack (a "Cloud Engineer" or "Platform
-    Engineer" role with 2-4 years required should match just as well as a
-    "Software Engineer" one; keyword/title filtering already narrowed the
-    candidates down to engineering roles before this ever runs).
+def matches_experience_level(
+    title: str,
+    description: str,
+    min_years: int = 2,
+    max_years: int = 4,
+    degree: str = "Bachelor's degree in Computer Science",
+) -> bool:
+    """AI-judges a job against two things ONLY, from the description content:
+
+    1. Required experience falls roughly within min_years-max_years of
+       professional software/IT experience (SDE-2 equivalent) — not the job
+       title, explicitly not the specific tech stack (a "Cloud Engineer" or
+       "Platform Engineer" posting requiring 2-4 years matches just as well
+       as a "Software Engineer" one; keyword/title filtering already
+       narrowed candidates to engineering roles before this ever runs).
+    2. The required EDUCATION LEVEL is satisfied by `degree` — e.g. a
+       posting requiring a Master's or PhD is rejected, one requiring "a
+       Bachelor's degree" or "equivalent practical experience" is not. This
+       is a degree-LEVEL check only — never match against specific skills,
+       projects, or work history; that's out of scope by design.
 
     Returns True — i.e. doesn't reject the job — whenever it can't actually
     determine an answer (no description to evaluate, AI unavailable, budget
@@ -180,24 +192,34 @@ def matches_experience_level(title: str, description: str, min_years: int = 2, m
         return True
 
     prompt = (
-        f"You are screening a job posting to check its REQUIRED experience level — "
-        f"specifically whether it needs roughly {min_years}-{max_years} years of "
-        f"professional software/IT engineering experience (an \"SDE-2\"/\"Software "
-        f"Engineer II\" equivalent level).\n\n"
-        f"Judge ONLY by the experience-level requirement and whether this is a "
-        f"software/IT engineering role in general — titles like Cloud Engineer, "
-        f"Backend Engineer, Platform Engineer, DevOps Engineer, Infrastructure "
-        f"Engineer all count equally. Do NOT judge by the specific technology "
-        f"stack (language, framework, cloud provider) and do NOT judge by exact "
-        f"title wording.\n\n"
+        f"You are screening a job posting against a candidate with a {degree}, "
+        f"checking TWO things only from the description below:\n\n"
+        f"1. REQUIRED EXPERIENCE: does the role need roughly {min_years}-{max_years} years "
+        f"of professional software/IT engineering experience (an \"SDE-2\"/\"Software "
+        f"Engineer II\" equivalent level)? Judge by the stated requirement, not the job "
+        f"title — Cloud Engineer, Backend Engineer, Platform Engineer, DevOps Engineer, "
+        f"Infrastructure Engineer all count equally if this is an engineering/IT role. "
+        f"Do NOT judge by the specific technology stack (language, framework, cloud "
+        f"provider) or exact title wording.\n\n"
+        f"2. REQUIRED EDUCATION LEVEL: is a {degree} (or \"Bachelor's or equivalent "
+        f"practical experience\") sufficient per the posting's stated minimum "
+        f"qualifications? Reject only if the posting explicitly requires a Master's or "
+        f"PhD/doctoral degree as a minimum (not just \"preferred\"). Do NOT compare "
+        f"against any specific skills, projects, or work history — only the degree level "
+        f"stated as a requirement.\n\n"
         f"Job title: {title}\n"
         f"Job description:\n---\n{description[:3000]}\n---\n\n"
-        f"Does this role's required experience fall roughly within {min_years}-{max_years} "
-        f"years (not entry-level/0-1 years, not senior/staff/5+ years)? "
-        f"Respond with ONLY \"yes\" or \"no\" as the first word."
+        f"Does this job pass BOTH checks? Respond with ONLY \"yes\" or \"no\" as the "
+        f"first word."
     )
 
-    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=25)
+    # Same pattern as playwright_render's extraction call: a tight timeout
+    # here caused real, verified failures (2 of 4 test cases timed out at
+    # 25s and fell open rather than being correctly judged) — not a prompt
+    # or logic problem. One retry on top of a longer timeout.
+    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
+    if status != 200:
+        status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
     if status != 200:
         return True
 

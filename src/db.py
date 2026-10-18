@@ -99,7 +99,10 @@ DEFAULT_FILTERS = {
     # role/location match — the reliable way to cap seniority (~3 years),
     # since postings phrase exact year-ranges too inconsistently to match
     # on text reliably, but title seniority words are consistent.
-    "exclude_terms": ["senior", "staff", "principal", "lead", "director", "vp", "head of", "manager"],
+    "exclude_terms": [
+        "senior", "staff", "principal", "lead", "director", "vp", "head of", "manager",
+        "intern", "internship", "phd", "doctoral", "co-op",
+    ],
     "always_allow_remote": True,
 }
 
