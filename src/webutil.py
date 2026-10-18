@@ -260,7 +260,15 @@ def rerank_company_matches(query: str, results: list[dict]) -> list[dict]:
         f"entity, comma-separated, most likely first. No commentary."
     )
 
-    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=10)
+    # Same timeout-too-tight bug found twice already this session: real
+    # calls measured at 17-21s+, so the original 10s here meant this almost
+    # NEVER actually completed — it silently fell back to the unfiltered
+    # list nearly every time, which is exactly why "Google Chrome
+    # Enterprise"/"Airbnbase"-style noise kept reappearing despite this
+    # function existing and (in isolated, lucky-timing tests) working.
+    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
+    if status != 200:
+        status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
     if status != 200:
         return results
 
@@ -300,7 +308,12 @@ def find_career_urls_via_gemini(company_name: str, domain: str, count: int = 3) 
         f"no markdown, just the URLs."
     )
 
-    status, data = _call_gemini(prompt, use_search_grounding=True, timeout=25)
+    # Same timeout-too-tight bug found repeatedly this session — and
+    # search-grounded calls (this one) are typically slower than plain ones,
+    # so 25s was even more likely to fail here than elsewhere.
+    status, data = _call_gemini(prompt, use_search_grounding=True, timeout=45)
+    if status != 200 and status != 429:
+        status, data = _call_gemini(prompt, use_search_grounding=True, timeout=45)
     if status == 429:
         logger.warning("Gemini rate limit/quota hit for %s", company_name)
         return {"status": "rate_limited", "urls": []}
