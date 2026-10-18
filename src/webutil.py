@@ -140,6 +140,10 @@ def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 15) -> 
 
     try:
         resp = requests.post(url, headers=headers, params=params, json=body, timeout=timeout)
+        if resp.status_code == 429 and db.claim_ai_limit_alert():
+            from .digest import send_ai_limit_alert
+            backend = "Vertex AI" if token else "the AI Studio key"
+            send_ai_limit_alert(f"{backend} returned HTTP 429 (rate limit/quota exceeded).")
         return resp.status_code, (resp.json() if resp.content else {})
     except Exception as e:
         logger.warning("Gemini request failed: %s", e)
@@ -152,6 +156,53 @@ def _extract_text(data: dict) -> str:
         for candidate in data.get("candidates", [])
         for part in candidate.get("content", {}).get("parts", [])
     )
+
+
+def matches_experience_level(title: str, description: str, min_years: int = 2, max_years: int = 4) -> bool:
+    """AI-judges whether a job's ACTUAL requirements correspond to roughly
+    min_years-max_years of professional software/IT experience (SDE-2
+    equivalent) — based on the description content, not the job title and
+    explicitly NOT the specific tech stack (a "Cloud Engineer" or "Platform
+    Engineer" role with 2-4 years required should match just as well as a
+    "Software Engineer" one; keyword/title filtering already narrowed the
+    candidates down to engineering roles before this ever runs).
+
+    Returns True — i.e. doesn't reject the job — whenever it can't actually
+    determine an answer (no description to evaluate, AI unavailable, budget
+    exhausted, call failed). The deterministic filters in filters.py already
+    did the real narrowing; this is a secondary refinement, not the primary
+    gate, so an AI hiccup should never silently drop an otherwise-matching
+    job."""
+    if not description or not description.strip():
+        return True
+    if not db.check_and_increment_ai_budget(AI_DAILY_CALL_LIMIT):
+        logger.warning("AI daily call budget (%d) exhausted — skipping experience-level check", AI_DAILY_CALL_LIMIT)
+        return True
+
+    prompt = (
+        f"You are screening a job posting to check its REQUIRED experience level — "
+        f"specifically whether it needs roughly {min_years}-{max_years} years of "
+        f"professional software/IT engineering experience (an \"SDE-2\"/\"Software "
+        f"Engineer II\" equivalent level).\n\n"
+        f"Judge ONLY by the experience-level requirement and whether this is a "
+        f"software/IT engineering role in general — titles like Cloud Engineer, "
+        f"Backend Engineer, Platform Engineer, DevOps Engineer, Infrastructure "
+        f"Engineer all count equally. Do NOT judge by the specific technology "
+        f"stack (language, framework, cloud provider) and do NOT judge by exact "
+        f"title wording.\n\n"
+        f"Job title: {title}\n"
+        f"Job description:\n---\n{description[:3000]}\n---\n\n"
+        f"Does this role's required experience fall roughly within {min_years}-{max_years} "
+        f"years (not entry-level/0-1 years, not senior/staff/5+ years)? "
+        f"Respond with ONLY \"yes\" or \"no\" as the first word."
+    )
+
+    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=25)
+    if status != 200:
+        return True
+
+    answer = _extract_text(data).strip().lower()
+    return answer.startswith("yes")
 
 
 def rerank_company_matches(query: str, results: list[dict]) -> list[dict]:

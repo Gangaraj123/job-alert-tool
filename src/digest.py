@@ -48,7 +48,7 @@ def _escape(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def send_email_digest(html_body: str, job_count: int) -> bool:
+def _send(subject: str, html_body: str) -> bool:
     settings = load_settings()
     if not settings.gmail_address or not settings.gmail_app_password:
         logger.warning("Email not configured (GMAIL_ADDRESS/GMAIL_APP_PASSWORD missing); skipping send")
@@ -57,7 +57,7 @@ def send_email_digest(html_body: str, job_count: int) -> bool:
     to_addr = settings.digest_to_email or settings.gmail_address
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Job Alert Digest — {job_count} new job(s)"
+    msg["Subject"] = subject
     msg["From"] = settings.gmail_address
     msg["To"] = to_addr
     msg.attach(MIMEText(html_body, "html"))
@@ -68,5 +68,18 @@ def send_email_digest(html_body: str, job_count: int) -> bool:
             server.sendmail(settings.gmail_address, [to_addr], msg.as_string())
         return True
     except Exception as e:
-        logger.error("Failed to send digest email: %s", e)
+        logger.error("Failed to send email (%s): %s", subject, e)
         return False
+
+
+def send_email_digest(html_body: str, job_count: int) -> bool:
+    return _send(f"Job Alert Digest — {job_count} new job(s)", html_body)
+
+
+def send_ai_limit_alert(reason: str) -> bool:
+    body = (
+        f"<p>The job-alert-tool's AI usage hit a limit and is falling back to "
+        f"non-AI behavior (pattern-guessing for discovery, structured-data-only "
+        f"for fetching) until it resets.</p><p><b>Reason:</b> {_escape(reason)}</p>"
+    )
+    return _send("Job Alert Tool — AI limit reached", body)

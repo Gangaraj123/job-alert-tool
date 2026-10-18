@@ -500,11 +500,31 @@ def check_and_increment_ai_budget(daily_limit: int = 50) -> bool:
     rows = _rows_to_dicts(res)
     count = int(rows[0]["value"]) if rows else 0
     if count >= daily_limit:
+        if claim_ai_limit_alert():
+            from .digest import send_ai_limit_alert
+            send_ai_limit_alert(f"This app's own daily cap ({daily_limit} calls) was reached.")
         return False
     client.execute(
         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         [key, str(count + 1), _now()],
+    )
+    return True
+
+
+def claim_ai_limit_alert() -> bool:
+    """Returns True (and marks it claimed) the FIRST time this is called on
+    a given day; False every time after. Used to send the "AI limit hit"
+    email once per day instead of once per call that hits the limit."""
+    import datetime as _dt
+    key = f"ai_limit_alerted_{_dt.datetime.utcnow().strftime('%Y-%m-%d')}"
+    client = get_client()
+    res = client.execute("SELECT value FROM settings WHERE key = ?", [key])
+    if _rows_to_dicts(res):
+        return False
+    client.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT DO NOTHING",
+        [key, _now()],
     )
     return True
 

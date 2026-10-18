@@ -19,6 +19,7 @@ from .fetchers import ats_api, jsonld_sitemap, playwright_render
 from .fetchers.base import FetchError
 from .link_crawl import find_job_related_links
 from .normalize import normalize_jobs
+from . import webutil
 from .webutil import domain_from_url, find_career_urls_via_gemini
 
 logger = logging.getLogger("job_alert.pipeline")
@@ -346,7 +347,22 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
     new_jobs = [j for j in filtered if not db.job_exists(j["id"])]
     logger.info("%d jobs passed filters, %d are new", len(filtered), len(new_jobs))
 
-    for job in new_jobs:
+    # AI experience-level check: a secondary refinement on top of the
+    # deterministic role/location/exclude filters above, applied only to
+    # genuinely new postings (never re-checks an already-seen job) to keep
+    # AI usage to a minimum. Judges actual required years of experience from
+    # the description, not title/tech-stack — "Cloud Engineer, 2-4 years"
+    # matches just as well as "Software Engineer II". Falls open (keeps the
+    # job) on anything it can't determine, so an AI hiccup never silently
+    # drops a real match.
+    new_jobs_to_store = [
+        j for j in new_jobs
+        if webutil.matches_experience_level(j["title"], j.get("description", ""))
+    ]
+    if len(new_jobs_to_store) != len(new_jobs):
+        logger.info("%d job(s) dropped by AI experience-level check", len(new_jobs) - len(new_jobs_to_store))
+
+    for job in new_jobs_to_store:
         db.insert_job(job, run_id=run_id)
     # Every job this run matched, new or already-seen — for full run history.
     db.record_run_jobs(run_id, [j["id"] for j in filtered])
@@ -371,7 +387,7 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
     duration = _time.monotonic() - started
     db.finish_run(
         run_id, duration, len(companies), companies_ok, companies_broken,
-        len(new_jobs), closed_jobs_count,
+        len(new_jobs_to_store), closed_jobs_count,
     )
 
     return {
@@ -380,8 +396,8 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
         "companies_checked": len(companies),
         "companies_ok": companies_ok,
         "companies_broken": companies_broken,
-        "new_jobs_count": len(new_jobs),
+        "new_jobs_count": len(new_jobs_to_store),
         "closed_jobs_count": closed_jobs_count,
         "email_sent": email_sent,
-        "new_jobs": new_jobs,
+        "new_jobs": new_jobs_to_store,
     }
