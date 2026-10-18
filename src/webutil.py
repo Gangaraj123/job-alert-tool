@@ -47,6 +47,14 @@ _URL_RE = re.compile(r"https?://[^\s\"'`<>\)\]]+")
 
 _vertex_credentials = None  # lazily created, cached across calls in this process
 
+# backend name -> time.monotonic() deadline until which it's considered
+# rate-limited. A 429 on the AI Studio free tier is a per-minute cap, so
+# re-probing it on every subsequent call just burns a request plus a
+# backoff sleep before failing over anyway; this skips it until the window
+# has plausibly reset.
+_rate_limited_until: dict[str, float] = {}
+RATE_LIMIT_COOLDOWN_SECONDS = 60
+
 
 def domain_from_url(url: str) -> str:
     parsed = urlparse(url if "://" in url else f"https://{url}")
@@ -151,7 +159,12 @@ def _build_backends(use_search_grounding: bool) -> list[dict]:
                 "tools": [{"googleSearch": {}}] if use_search_grounding else None,
             })
 
-    return backends
+    # Skip any backend currently in rate-limit cooldown, but never return an
+    # empty list just because everything is cooling down — in that case fall
+    # through and let the calls actually be attempted.
+    now = time.monotonic()
+    available = [b for b in backends if _rate_limited_until.get(b["name"], 0) <= now]
+    return available or backends
 
 
 def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 45) -> tuple[int, dict]:
@@ -193,6 +206,7 @@ def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 45) -> 
                 break  # network-level failure: go straight to the next backend
 
             if status == 200:
+                _rate_limited_until.pop(backend["name"], None)  # recovered
                 return status, data
 
             last_status, last_data = status, data
@@ -202,7 +216,14 @@ def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 45) -> 
                     logger.info("%s rate-limited (429); backing off before retry", backend["name"])
                     time.sleep(3)
                     continue
-                logger.warning("%s still rate-limited after backoff; failing over", backend["name"])
+                # Still limited after a backoff: stop re-probing this
+                # backend for a while so later calls fail over immediately
+                # instead of each paying a wasted request + sleep.
+                _rate_limited_until[backend["name"]] = time.monotonic() + RATE_LIMIT_COOLDOWN_SECONDS
+                logger.warning(
+                    "%s still rate-limited after backoff; skipping it for %ds and failing over",
+                    backend["name"], RATE_LIMIT_COOLDOWN_SECONDS,
+                )
             else:
                 logger.warning("%s returned HTTP %s", backend["name"], status)
             break  # non-200 and out of retries for this backend

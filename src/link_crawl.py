@@ -29,9 +29,48 @@ _PATH_HINT = re.compile(r"/(jobs?|careers?|openings?|vacanc\w*)(/|$)", re.IGNORE
 # generic "Search" button elsewhere on the page can't match.
 _TEXT_HINT = re.compile(
     r"(open roles?|open positions?|search jobs?|job search|view openings?|"
-    r"see openings?|current openings?|job openings?|browse jobs?|all jobs?)",
+    r"see openings?|current openings?|job openings?|browse jobs?|all jobs?|"
+    # "find jobs" was missing and is what Amazon's portal actually uses —
+    # 48 links were collected from its homepage and every one was rejected
+    # purely because the phrase list didn't cover the wording they chose.
+    r"find jobs?|view jobs?|explore jobs?|see jobs?|apply now)",
     re.IGNORECASE,
 )
+
+
+def filter_job_related_links(
+    links: list[tuple[str, str]], page_url: str, limit: int = 8
+) -> list[str]:
+    """Applies the same job-link heuristics as find_job_related_links, but
+    to (text, href) pairs already collected elsewhere — specifically from a
+    Playwright-rendered DOM. A plain-HTTP re-fetch of a JS-rendered careers
+    portal returns a shell with no navigation, so for those sites this is
+    the only way the "real listing is one click away" case is reachable."""
+    base_domain = urlparse(page_url).netloc
+    out: list[str] = []
+    seen: set[str] = {page_url}
+
+    for text, href in links:
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        absolute = urljoin(page_url, href)
+        if not (_PATH_HINT.search(urlparse(absolute).path) or _TEXT_HINT.search(text or "")):
+            continue
+        if urlparse(absolute).netloc != base_domain and not _is_known_ats(absolute):
+            continue
+        if absolute not in seen:
+            seen.add(absolute)
+            out.append(absolute)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _is_known_ats(url: str) -> bool:
+    return any(h in url for h in (
+        "ashbyhq", "greenhouse", "lever.co", "workable",
+        "smartrecruiters", "myworkdayjobs", "recruitee",
+    ))
 
 
 def find_job_related_links(page_url: str, limit: int = 8) -> list[str]:

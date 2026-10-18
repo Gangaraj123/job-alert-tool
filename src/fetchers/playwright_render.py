@@ -25,7 +25,7 @@ import concurrent.futures as _cf
 import json
 import logging
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -205,6 +205,47 @@ def _fetch_detail_descriptions(urls: list[str], page_url: str) -> dict[str, str]
     return out
 
 
+# A link pointing at an individual posting: ".../jobs/<something>", not a
+# category/landing page. Requires the slash so "/job_categories" and
+# "/job-categories" (nav links) don't match.
+_JOB_DETAIL_PATH = re.compile(r"/(?:jobs?|positions?|openings?|vacanc\w*)/(?=[^/]{2,})", re.IGNORECASE)
+
+# Link text that's a generic affordance rather than a job title.
+_GENERIC_LINK_TEXT = re.compile(
+    r"^(\.{0,3}\s*(read more|learn more|view|view job|apply|apply now|details|see more|more)\s*\.{0,3})$",
+    re.IGNORECASE,
+)
+
+
+def _extract_jobs_from_links(links: list[tuple[str, str]], page_url: str) -> list[dict]:
+    """Deterministic, zero-AI extraction: on most job boards each posting
+    on the listing page is a real anchor whose text IS the job title and
+    whose href IS the application URL (verified on Amazon's portal, where
+    every posting appears as '<title>' -> '/en/jobs/<id>/<slug>').
+
+    Running this before the AI tier means the common case costs no AI call
+    at all — which matters both for the daily budget and because AI
+    extraction is the slowest step by far. It's also strictly more accurate
+    when it applies: titles and URLs are read straight from the DOM rather
+    than re-derived by a model from flattened page text."""
+    by_url: dict[str, str] = {}
+    for text, href in links:
+        if not href or not _JOB_DETAIL_PATH.search(urlparse(href).path):
+            continue
+        text = (text or "").strip()
+        if not text or len(text) < 4 or _GENERIC_LINK_TEXT.match(text):
+            continue
+        # Several anchors can point at one posting (title + "Read more");
+        # keep the longest text, which is the real title.
+        if len(text) > len(by_url.get(href, "")):
+            by_url[href] = text
+
+    return [
+        {"title": title, "location": None, "url": url, "description": ""}
+        for url, title in by_url.items()
+    ]
+
+
 def _extract_via_ai(page_text: str, page_url: str, links: list[tuple[str, str]]) -> list[dict]:
     from ..webutil import _call_gemini, _extract_text  # local import avoids a cycle at module load
 
@@ -258,11 +299,27 @@ def fetch(career_page_url: str, **_) -> list[dict]:
 
     jobs = _extract_jobpostings_from_html(html, career_page_url)
     tier_used = "structured"
+
+    if not jobs:
+        # Zero-AI structural pass before spending an AI call — most boards
+        # render each posting as a plain anchor we can read directly.
+        jobs = _extract_jobs_from_links(links, career_page_url)
+        tier_used = "links"
+
     if not jobs:
         jobs = _extract_via_ai(text, career_page_url, links)
         tier_used = "ai"
         if not jobs:
-            raise FetchError("playwright_render: no structured job data, and AI found no postings in the page text")
+            # Attach the links we already collected from the RENDERED DOM.
+            # The caller's link-crawl fallback otherwise re-fetches the page
+            # over plain HTTP, which on a JS-rendered portal (Amazon's,
+            # Google's) sees no nav links at all — so the real listing page
+            # one click away was unreachable. These cost nothing extra.
+            err = FetchError(
+                "playwright_render: no structured job data, and AI found no postings in the page text"
+            )
+            err.rendered_links = links
+            raise err
 
     # Fill in full descriptions from each job's own detail page — neither
     # structured-data nor AI extraction reliably gets more than a snippet

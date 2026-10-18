@@ -17,10 +17,10 @@ from .digest import build_digest_html, send_email_digest
 from .filters import filter_jobs
 from .fetchers import ats_api, jsonld_sitemap, playwright_render
 from .fetchers.base import FetchError
-from .link_crawl import find_job_related_links
+from .link_crawl import filter_job_related_links, find_job_related_links
 from .normalize import normalize_jobs
 from . import webutil
-from .webutil import domain_from_url, find_career_urls_via_gemini
+from .webutil import find_career_urls_via_gemini
 
 logger = logging.getLogger("job_alert.pipeline")
 
@@ -83,12 +83,23 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
         except FetchError as e:
             errors.append(str(e))
 
+    page_is_dead = False
     try:
         jobs = jsonld_sitemap.fetch(company["url"])
         if jobs:
             return jobs, "jsonld_sitemap"
     except FetchError as e:
         errors.append(str(e))
+        # A definitive client error means the page genuinely isn't there —
+        # rendering it in a browser just re-renders an error page, which
+        # cost ~11-19s per dead candidate (render + an AI extraction call
+        # against the 404 body).
+        page_is_dead = any(code in str(e) for code in ("404 Client Error", "403 Client Error", "410 Client Error"))
+
+    rendered_links = None
+    if page_is_dead:
+        logger.debug("skipping render tier for %s — page returned a client error", company["url"])
+        raise FetchError("; ".join(errors))
 
     try:
         # Renders once; tries structured data first, then (if that's empty)
@@ -99,8 +110,15 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
             return jobs, "playwright_render"
     except FetchError as e:
         errors.append(str(e))
+        rendered_links = getattr(e, "rendered_links", None)
 
-    raise FetchError("; ".join(errors) if errors else "all tiers returned zero jobs")
+    final = FetchError("; ".join(errors) if errors else "all tiers returned zero jobs")
+    # Carry the rendered page's links up so the caller can follow them to a
+    # real listing page without re-fetching over plain HTTP (which can't
+    # see JS-rendered navigation).
+    if rendered_links:
+        final.rendered_links = rendered_links
+    raise final
 
 
 def preview_detect_and_fetch(url: str) -> dict:
@@ -123,7 +141,37 @@ def preview_detect_and_fetch(url: str) -> dict:
         return {
             "ok": False, "ats_type": ats_type, "ats_identifier": ats_identifier,
             "tier": None, "job_count": 0, "error": str(e),
+            # Links from the rendered DOM, when the render tier ran — lets
+            # discover_career_url follow JS-rendered navigation to the real
+            # listing page. Absent when an earlier tier failed first.
+            "rendered_links": getattr(e, "rendered_links", None),
         }
+
+
+def _job_links_from_rendered(rendered_links, page_url: str) -> list[str]:
+    """Job-related links out of a rendered page's collected (text, href)
+    pairs, or [] when the render tier didn't run for this URL."""
+    if not rendered_links:
+        return []
+    return filter_job_related_links(rendered_links, page_url)
+
+
+def _host_resolves(url: str) -> bool:
+    """True if the URL's hostname has a DNS record. Used to discard dead
+    candidate URLs for the price of a DNS lookup instead of a full
+    retried HTTP fetch."""
+    import socket
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname
+    if not host:
+        return False
+    try:
+        socket.getaddrinfo(host, None)
+        return True
+    except OSError:
+        logger.debug("skipping %s — hostname does not resolve", url)
+        return False
 
 
 def discover_career_url(
@@ -167,7 +215,13 @@ def discover_career_url(
     tried_urls: set[str] = set()  # exact-URL dedup across ALL tiers — a URL
     # guessed by patterns that Gemini already suggested (or vice versa) must
     # never be fetched twice; each attempt costs real seconds of the budget.
-    seen_domains = {domain}
+    # NOTE: there is deliberately no domain-level dedup here. An earlier
+    # version seeded a `seen_domains={domain}` set and skipped any Gemini
+    # suggestion on the company's own domain — which silently discarded the
+    # single most valuable candidate for most companies (e.g. Gemini
+    # correctly answers "amazon.jobs/en/search" for Amazon, which was then
+    # thrown away for being on amazon.jobs). Exact-URL dedup above is
+    # sufficient and doesn't have that failure mode.
 
     def _out_of_time() -> bool:
         return _time.monotonic() - started > max_seconds
@@ -180,6 +234,19 @@ def discover_career_url(
         if url in tried_urls:
             return None
         tried_urls.add(url)
+        # Skip hostnames that don't exist BEFORE doing any real work. Both
+        # the speculative "careers.{domain}"/"jobs.{domain}" guesses and the
+        # occasional garbled LLM suggestion point at hosts with no DNS
+        # record — and the HTTP layer treats a resolution failure as a
+        # retryable connection error, so each one burned ~13s (3 retries
+        # with backoff, then a pointless link-crawl against it). A DNS
+        # lookup costs milliseconds and rules them out immediately.
+        if not _host_resolves(url):
+            attempted.append({
+                "url": url, "ok": False, "ats_type": None, "ats_identifier": None,
+                "tier": None, "job_count": 0, "error": "hostname does not resolve",
+            })
+            return None
         _progress(f"Checking {url}…")
         result = preview_detect_and_fetch(url)
         attempted.append({"url": url, **result})
@@ -194,7 +261,14 @@ def discover_career_url(
         # time budget is usually already spent.
         if follow_links and not _out_of_time():
             _progress(f"Reading {url} for job-related links…")
-            for link in find_job_related_links(url):
+            # Prefer links harvested from the RENDERED DOM (free — already
+            # collected during the render that just ran). Only fall back to
+            # a plain-HTTP re-fetch when the render tier never ran, since
+            # on a JS-rendered portal that fetch sees no navigation at all.
+            links = _job_links_from_rendered(result.get("rendered_links"), url)
+            if not links:
+                links = find_job_related_links(url)
+            for link in links:
                 if _out_of_time():
                     break
                 if (found := _try(link, gemini_status, follow_links=False)):
@@ -243,10 +317,6 @@ def discover_career_url(
         if _out_of_time():
             return {"found": False, "url": None, "attempted": attempted,
                      "gemini_status": gemini["status"], "timed_out": True}
-        candidate_domain = domain_from_url(url)
-        if candidate_domain in seen_domains:
-            continue
-        seen_domains.add(candidate_domain)
         if (found := _try(url, gemini["status"])):
             return found
 
@@ -255,6 +325,13 @@ def discover_career_url(
         f"https://{domain}/jobs",
         f"https://careers.{domain}",  # many large companies (e.g. Google) use a subdomain
         f"https://jobs.{domain}",
+        # Dedicated search/listing paths — a careers *landing* page often has
+        # no postings on it at all while /search does (Amazon's portal is
+        # exactly this shape). Cheap to include now that non-resolving hosts
+        # are ruled out by DNS and 404s skip the expensive render tier.
+        f"https://{domain}/en/search",
+        f"https://{domain}/search",
+        f"https://{domain}/careers/search",
         f"https://{domain}",
     ]
     for url in candidates:
