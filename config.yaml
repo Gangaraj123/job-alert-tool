@@ -3,6 +3,10 @@
 # everything else.
 
 fetch:
+  # Companies are fetched concurrently (each is mostly network/browser
+  # wait, and they're independent). Bounded so a long company list can't
+  # spawn an unbounded number of headless browsers at once.
+  max_concurrent_companies: 4
   request_timeout_seconds: 20
   max_retries: 3
   retry_backoff_seconds: 2
@@ -17,11 +21,16 @@ discovery:
   # (preferred) or Vertex AI credentials as a fallback — without either,
   # these features just use their non-AI fallback.
   #
-  # NOTE: "gemini-2.5-flash" returns 404 "no longer available to new users"
-  # on at least one AI Studio key tested — confirmed working via direct curl
-  # test against this exact key/endpoint. If this starts failing, check
-  # https://ai.google.dev/gemini-api/docs/models for the current name.
+  # Model names differ PER BACKEND — verified by direct API calls:
+  #   * AI Studio rejects "gemini-2.5-flash" with 404 "no longer available
+  #     to new users" and recommends gemini-3.8-flash.
+  #   * Vertex doesn't serve "gemini-3.8-flash" (404) but does serve
+  #     "gemini-2.5-flash".
+  # Using one shared name silently broke cross-backend failover, so each
+  # backend gets its own. If either starts 404ing, check
+  # https://ai.google.dev/gemini-api/docs/models for current names.
   gemini_model: gemini-3.8-flash
+  vertex_model: gemini-2.5-flash
 
 logging:
   level: INFO

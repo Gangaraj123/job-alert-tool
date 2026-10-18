@@ -21,6 +21,7 @@ failed, and costs against the shared daily AI call budget.
 """
 from __future__ import annotations
 
+import concurrent.futures as _cf
 import json
 import logging
 import re
@@ -37,6 +38,7 @@ logger = logging.getLogger("job_alert.fetchers.playwright_render")
 MAX_PAGE_TEXT_CHARS = 28000
 MAX_PAGINATION_ROUNDS = 8
 MAX_DETAIL_PAGES = 15
+DETAIL_CONCURRENCY = 5
 AI_DAILY_CALL_LIMIT = 50
 
 EXTRACTION_PROMPT = """The following is the visible text of a company careers/jobs page,
@@ -175,14 +177,29 @@ def _fetch_detail_descriptions(urls: list[str], page_url: str) -> dict[str, str]
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            page = browser.new_page()
-            for url in distinct:
+            # Several pages open in parallel tabs in the one browser —
+            # loading 15 detail pages one after another was adding ~15x a
+            # single page load to every fetch, and they're independent.
+            contexts = [browser.new_page() for _ in range(min(DETAIL_CONCURRENCY, len(distinct)))]
+
+            def _load(args):
+                page, url = args
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=8000)
                     page.wait_for_timeout(600)
-                    out[url] = page.inner_text("body")[:4000]
+                    return url, page.inner_text("body")[:4000]
                 except Exception as e:
                     logger.debug("detail page fetch failed for %s: %s", url, e)
+                    return url, None
+
+            # Round-robin URLs across the open tabs; each tab is used by at
+            # most one thread at a time (Playwright pages aren't reentrant).
+            for batch_start in range(0, len(distinct), len(contexts)):
+                batch = distinct[batch_start:batch_start + len(contexts)]
+                with _cf.ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                    for url, text in pool.map(_load, zip(contexts, batch)):
+                        if text:
+                            out[url] = text
         finally:
             browser.close()
     return out
@@ -204,17 +221,12 @@ def _extract_via_ai(page_text: str, page_url: str, links: list[tuple[str, str]])
     prompt = EXTRACTION_PROMPT.format(
         page_url=page_url, page_text=page_text[:MAX_PAGE_TEXT_CHARS], links_text=links_text[:6000],
     )
-    # Measured: successful calls typically take 17-21s for a ~12k char page,
-    # so a 20s timeout was cutting it right at the edge — any minor latency
-    # spike caused an intermittent, hard-to-reproduce failure. One retry on
-    # top of the longer timeout, since content extraction itself has proven
-    # reliable (verified 3/3 against Google's page) — it's specifically
-    # transient network timeouts worth retrying, not a real failure mode.
-    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
+    # Measured: successful calls take 17-21s for a ~12k char page, so the
+    # default 45s timeout leaves real headroom. _call_gemini handles its
+    # own backoff-retry and cross-backend failover on top of that.
+    status, data = _call_gemini(prompt, use_search_grounding=False)
     if status != 200:
-        logger.info("ai_extract: first attempt failed (status %s), retrying once", status)
-        status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
-    if status != 200:
+        logger.info("ai_extract: all AI backends failed (status %s)", status)
         return []
 
     raw_text = _extract_text(data).strip()

@@ -325,23 +325,42 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
     collected: list[dict] = []
     companies_ok = companies_broken = closed_jobs_count = 0
 
-    for company in companies:
+    def _fetch_one(company: dict) -> tuple[dict, list[dict] | None, str | None]:
+        """Network-bound work only — no DB writes, so this is safe to run
+        concurrently. Returns (company, normalized_jobs, error)."""
         try:
             company = ensure_ats_detected(company, cfg)
             raw_jobs, tier = fetch_company_jobs_tiered(company, cfg)
             normalized = normalize_jobs(raw_jobs, company["name"], tier)
             for j in normalized:
                 j["company_id"] = company["id"]
-            collected.extend(normalized)
-            db.set_company_run_status(company["id"], "ok", job_count=len(normalized))
-            closed_jobs_count += db.close_stale_jobs(company["id"], [j["id"] for j in normalized])
-            companies_ok += 1
             logger.info("%s: %d job(s) via %s", company["name"], len(normalized), tier)
+            return company, normalized, None
         except Exception as e:
             logger.error("%s: FAILED — %s", company["name"], e)
-            db.set_company_run_status(company["id"], "error", error=str(e))
+            return company, None, str(e)
+
+    # Companies are fetched concurrently — each one is almost entirely
+    # waiting on network/browser I/O, and they're fully independent, so
+    # running them serially made a run take the SUM of every company's
+    # time. Bounded to avoid launching an unbounded number of headless
+    # browsers at once. DB writes stay on this thread (libsql's client
+    # isn't safe to share across threads), so only the fetching overlaps.
+    import concurrent.futures as _cf
+
+    max_workers = min(cfg.get("fetch", {}).get("max_concurrent_companies", 4), max(len(companies), 1))
+    with _cf.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        results = list(pool.map(_fetch_one, companies))
+
+    for company, normalized, error in results:
+        if error is not None:
+            db.set_company_run_status(company["id"], "error", error=error)
             companies_broken += 1
             continue  # per-company error isolation: one bad fetcher never aborts the run
+        collected.extend(normalized)
+        db.set_company_run_status(company["id"], "ok", job_count=len(normalized))
+        closed_jobs_count += db.close_stale_jobs(company["id"], [j["id"] for j in normalized])
+        companies_ok += 1
 
     filtered = filter_jobs(collected, db.get_filters())
     new_jobs = [j for j in filtered if not db.job_exists(j["id"])]

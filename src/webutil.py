@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from urllib.parse import urlparse
 
 import requests
@@ -109,45 +110,111 @@ def _vertex_access_token() -> str | None:
         return None
 
 
-def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 15) -> tuple[int, dict]:
-    """Calls Gemini via the AI Studio key if configured, else Vertex AI.
-    Returns (http_status_code, parsed_json_body) — 0 as the status means the
-    request itself failed to even complete (network error, bad credentials,
-    etc.), distinct from a real HTTP error status."""
+def _build_backends(use_search_grounding: bool) -> list[dict]:
+    """Every usable Gemini backend, in preference order: the AI Studio key
+    first, Vertex AI second. Returns [] if neither is configured.
+
+    Two backends matter because the AI Studio free tier enforces a
+    per-MINUTE request cap — a short burst of calls (which this app does
+    constantly: discovery, reranking, extraction, experience checks) trips
+    a 429 that clears within seconds, while Vertex (billed against GCP
+    credits) has far more headroom. Having only one backend meant one
+    transient 429 silently degraded every AI feature at once."""
     settings = load_settings()
-    model = load_config().get("discovery", {}).get("gemini_model", "gemini-2.5-flash")
-    tools = [{"googleSearch": {}}] if use_search_grounding else None
-    token = None
+    discovery_cfg = load_config().get("discovery", {})
+    # Deliberately separate: the same model name is NOT valid on both
+    # backends (see config.yaml) — sharing one silently 404'd every failover.
+    ai_studio_model = discovery_cfg.get("gemini_model", "gemini-3.8-flash")
+    vertex_model = discovery_cfg.get("vertex_model", "gemini-2.5-flash")
+    backends = []
 
     if settings.gemini_api_key:
-        url = AI_STUDIO_URL_TEMPLATE.format(model=model)
-        headers = {}
-        params = {"key": settings.gemini_api_key}
-        # AI Studio's tool schema uses snake_case, unlike Vertex's camelCase.
-        tools = [{"google_search": {}}] if use_search_grounding else None
-    elif (token := _vertex_access_token()):
-        url = VERTEX_URL_TEMPLATE.format(
-            location=settings.vertex_location, project=settings.vertex_project, model=model
-        )
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        params = {}
-    else:
+        backends.append({
+            "name": "AI Studio",
+            "url": AI_STUDIO_URL_TEMPLATE.format(model=ai_studio_model),
+            "headers": {},
+            "params": {"key": settings.gemini_api_key},
+            # AI Studio's tool schema uses snake_case, unlike Vertex's camelCase.
+            "tools": [{"google_search": {}}] if use_search_grounding else None,
+        })
+
+    if settings.google_vertex_credentials_json and settings.vertex_project:
+        token = _vertex_access_token()
+        if token:
+            backends.append({
+                "name": "Vertex AI",
+                "url": VERTEX_URL_TEMPLATE.format(
+                    location=settings.vertex_location, project=settings.vertex_project, model=vertex_model
+                ),
+                "headers": {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                "params": {},
+                "tools": [{"googleSearch": {}}] if use_search_grounding else None,
+            })
+
+    return backends
+
+
+def _call_gemini(prompt: str, use_search_grounding: bool, timeout: int = 45) -> tuple[int, dict]:
+    """Calls Gemini, transparently handling transient rate limits.
+
+    Strategy per backend: try, and on a 429 (per-minute rate cap) wait
+    briefly and retry once — these clear in seconds. If the backend is
+    still rate-limited or errors, fail over to the next backend entirely.
+    Only when EVERY backend is exhausted does this report failure, and only
+    then does it send the user a "limit reached" alert — previously a
+    single transient 429 both degraded the feature and fired an alarm.
+
+    Returns (http_status_code, parsed_json_body) — 0 as the status means
+    the request failed to complete at all (network error, bad credentials),
+    distinct from a real HTTP error status."""
+    backends = _build_backends(use_search_grounding)
+    if not backends:
         return 0, {}
 
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-    if tools:
-        body["tools"] = tools
+    last_status, last_data = 0, {}
+    saw_rate_limit = False
 
-    try:
-        resp = requests.post(url, headers=headers, params=params, json=body, timeout=timeout)
-        if resp.status_code == 429 and db.claim_ai_limit_alert():
-            from .digest import send_ai_limit_alert
-            backend = "Vertex AI" if token else "the AI Studio key"
-            send_ai_limit_alert(f"{backend} returned HTTP 429 (rate limit/quota exceeded).")
-        return resp.status_code, (resp.json() if resp.content else {})
-    except Exception as e:
-        logger.warning("Gemini request failed: %s", e)
-        return 0, {}
+    for backend in backends:
+        body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+        if backend["tools"]:
+            body["tools"] = backend["tools"]
+
+        for attempt in range(2):  # one immediate try, one after backoff
+            try:
+                resp = requests.post(
+                    backend["url"], headers=backend["headers"],
+                    params=backend["params"], json=body, timeout=timeout,
+                )
+                status = resp.status_code
+                data = resp.json() if resp.content else {}
+            except Exception as e:
+                logger.warning("%s request failed: %s", backend["name"], e)
+                last_status, last_data = 0, {}
+                break  # network-level failure: go straight to the next backend
+
+            if status == 200:
+                return status, data
+
+            last_status, last_data = status, data
+            if status == 429:
+                saw_rate_limit = True
+                if attempt == 0:
+                    logger.info("%s rate-limited (429); backing off before retry", backend["name"])
+                    time.sleep(3)
+                    continue
+                logger.warning("%s still rate-limited after backoff; failing over", backend["name"])
+            else:
+                logger.warning("%s returned HTTP %s", backend["name"], status)
+            break  # non-200 and out of retries for this backend
+
+    # Every backend exhausted. Only alert for a genuine capacity problem
+    # (a 429 somewhere), not for e.g. a malformed-request 400.
+    if saw_rate_limit and db.claim_ai_limit_alert():
+        from .digest import send_ai_limit_alert
+        names = " and ".join(b["name"] for b in backends)
+        send_ai_limit_alert(f"All AI backends ({names}) returned HTTP 429 (rate limit/quota exceeded).")
+
+    return last_status, last_data
 
 
 def _extract_text(data: dict) -> str:
@@ -213,13 +280,8 @@ def matches_experience_level(
         f"first word."
     )
 
-    # Same pattern as playwright_render's extraction call: a tight timeout
-    # here caused real, verified failures (2 of 4 test cases timed out at
-    # 25s and fell open rather than being correctly judged) — not a prompt
-    # or logic problem. One retry on top of a longer timeout.
-    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
-    if status != 200:
-        status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
+    # _call_gemini handles its own backoff-retry and cross-backend failover.
+    status, data = _call_gemini(prompt, use_search_grounding=False)
     if status != 200:
         return True
 
@@ -260,15 +322,8 @@ def rerank_company_matches(query: str, results: list[dict]) -> list[dict]:
         f"entity, comma-separated, most likely first. No commentary."
     )
 
-    # Same timeout-too-tight bug found twice already this session: real
-    # calls measured at 17-21s+, so the original 10s here meant this almost
-    # NEVER actually completed — it silently fell back to the unfiltered
-    # list nearly every time, which is exactly why "Google Chrome
-    # Enterprise"/"Airbnbase"-style noise kept reappearing despite this
-    # function existing and (in isolated, lucky-timing tests) working.
-    status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
-    if status != 200:
-        status, data = _call_gemini(prompt, use_search_grounding=False, timeout=45)
+    # _call_gemini handles its own backoff-retry and cross-backend failover.
+    status, data = _call_gemini(prompt, use_search_grounding=False)
     if status != 200:
         return results
 
@@ -308,12 +363,9 @@ def find_career_urls_via_gemini(company_name: str, domain: str, count: int = 3) 
         f"no markdown, just the URLs."
     )
 
-    # Same timeout-too-tight bug found repeatedly this session — and
-    # search-grounded calls (this one) are typically slower than plain ones,
-    # so 25s was even more likely to fail here than elsewhere.
-    status, data = _call_gemini(prompt, use_search_grounding=True, timeout=45)
-    if status != 200 and status != 429:
-        status, data = _call_gemini(prompt, use_search_grounding=True, timeout=45)
+    # _call_gemini handles its own backoff-retry and cross-backend failover,
+    # so a 429 surfacing here means EVERY backend is genuinely rate-limited.
+    status, data = _call_gemini(prompt, use_search_grounding=True)
     if status == 429:
         logger.warning("Gemini rate limit/quota hit for %s", company_name)
         return {"status": "rate_limited", "urls": []}
