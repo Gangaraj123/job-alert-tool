@@ -21,6 +21,14 @@ inject_style()
 db.init_schema()
 render_sidebar()
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _probe(name: str, domain: str):
+    """Cached so re-renders (every keystroke commit, every toggle) don't
+    re-hit the ATS APIs for results already on screen."""
+    from src.fetchers.ats_api import probe_board
+    return probe_board(name, domain)
+
+
 st.title("Companies")
 st.markdown(
     '<p class="lead">Search for a company by name — its careers page is found and '
@@ -41,12 +49,24 @@ with st.expander("Add a company", expanded=not db.list_companies()):
             st.rerun()
 
         if "discovery" not in st.session_state:
-            status = st.status(f"Finding {picked['name']}'s career page…", expanded=True)
-            st.session_state["discovery"] = discover_career_url(
-                picked["domain"], picked["name"],
-                on_progress=lambda msg: status.update(label=msg),
-            )
-            status.update(label="Done", state="complete", expanded=False)
+            # The search list already probed for an ATS board. When it found
+            # one, that IS the answer — re-running full discovery would just
+            # rediscover it in 30-90s. Reuse it and skip straight to Save.
+            prefetched = st.session_state.pop("prefetched_portal", None)
+            if prefetched:
+                st.session_state["discovery"] = {
+                    "found": True, "ok": True, "url": prefetched["board_url"],
+                    "ats_type": prefetched["ats_type"], "ats_identifier": prefetched["slug"],
+                    "tier": "ats_api", "job_count": prefetched["job_count"],
+                    "attempted": [], "gemini_status": "not_needed", "timed_out": False,
+                }
+            else:
+                status = st.status(f"Finding {picked['name']}'s career page…", expanded=True)
+                st.session_state["discovery"] = discover_career_url(
+                    picked["domain"], picked["name"],
+                    on_progress=lambda msg: status.update(label=msg),
+                )
+                status.update(label="Done", state="complete", expanded=False)
         discovery = st.session_state["discovery"]
 
         if discovery["found"]:
@@ -119,20 +139,37 @@ with st.expander("Add a company", expanded=not db.list_companies()):
             # degraded for a known, temporary reason.
             ai_ok, ai_reason = ai_status()
             if not ai_ok and len(results) > 1:
-                st.caption(f"Showing all name matches — AI narrowing is off. {ai_reason}")
+                st.caption(
+                    "Ranked by name and domain — best match first. "
+                    f"AI narrowing is off ({ai_reason})"
+                )
             if not results:
                 st.caption(f"No matches for \"{st.session_state['searched_query']}\" — try a different spelling, or use manual entry below.")
+
             for r in results:
                 with st.container(border=True):
                     row = st.columns([0.6, 4, 1.2])
                     row[0].markdown(logo_img(r["logo_url"]), unsafe_allow_html=True)
+
+                    # Probe for a known ATS board up front, so you can see
+                    # which results are actually trackable before picking
+                    # one — rather than selecting, waiting through full
+                    # discovery, and only then finding out.
+                    portal = _probe(r["name"], r["domain"])
+                    if portal:
+                        badge = chip(f"{portal['ats_type']} · {portal['job_count']} roles", "ok")
+                    else:
+                        badge = chip("needs a deeper check", "neutral")
+
                     row[1].markdown(
                         f'<div class="row-title">{r["name"]}</div>'
-                        f'<div class="row-sub">{r["domain"]}</div>',
+                        f'<div class="row-sub">{r["domain"]}</div>'
+                        f'<div style="margin-top:.3rem">{badge}</div>',
                         unsafe_allow_html=True,
                     )
                     if row[2].button("Select", key=f"pick_{r['domain']}", use_container_width=True):
                         st.session_state["picked_company"] = r
+                        st.session_state["prefetched_portal"] = portal
                         st.session_state.pop("discovery", None)
                         st.rerun()
 

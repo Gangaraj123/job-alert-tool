@@ -67,6 +67,48 @@ def _slug_candidates(company_name: str, domain: str) -> list[str]:
     return out
 
 
+def probe_board(company_name: str, domain: str, timeout_each: float = 6.0) -> dict | None:
+    """Fast, parallel variant of guess_board for interactive use.
+
+    guess_board walks slug x ATS combinations one at a time, which is fine
+    inside a background pipeline run but far too slow to call while someone
+    waits on a search box. This fires every combination at once and takes
+    the first real hit, so the Add-a-company list can show "Greenhouse ·
+    144 roles" against each result before anything is selected.
+
+    Returns {ats_type, slug, board_url, job_count} or None. Never raises —
+    a probe failing just means "no answer yet", not an error worth showing."""
+    combos = [(ats, slug) for slug in _slug_candidates(company_name, domain) for ats in _GUESSABLE_ATS]
+    if not combos:
+        return None
+
+    def _one(combo):
+        ats_type, slug = combo
+        try:
+            jobs = fetch(ats_type, slug)
+        except Exception:
+            return None
+        if not jobs:
+            return None
+        return {
+            "ats_type": ats_type,
+            "slug": slug,
+            "board_url": _BOARD_URL_TEMPLATES[ats_type].format(slug=slug),
+            "job_count": len(jobs),
+        }
+
+    import concurrent.futures as _cf
+
+    try:
+        with _cf.ThreadPoolExecutor(max_workers=min(10, len(combos))) as pool:
+            for result in pool.map(_one, combos, timeout=timeout_each * 2):
+                if result:
+                    return result
+    except Exception:
+        return None
+    return None
+
+
 def guess_board(company_name: str, domain: str) -> tuple[str, str, str, list[dict]] | None:
     """Tries obvious slug variants of the company name/domain against every
     directly-guessable ATS. Returns (ats_type, slug, board_url, jobs) on the

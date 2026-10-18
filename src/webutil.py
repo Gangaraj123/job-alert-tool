@@ -112,7 +112,62 @@ def search_companies(query: str, limit: int = 8) -> list[dict]:
         if not domain:
             continue
         out.append({"name": r.get("name") or domain, "domain": domain, "logo_url": favicon_url(domain)})
-    return out
+    return rank_company_matches(query, out)
+
+
+# Country-code and vanity TLDs that, for a query like "Amazon", almost
+# always indicate a regional storefront rather than the hiring entity.
+_REGIONAL_TLDS = {
+    "it", "fi", "de", "fr", "es", "nl", "se", "no", "dk", "pl", "br",
+    "mx", "jp", "cn", "in", "au", "ca", "uk", "ie", "ch", "at", "be",
+}
+
+
+def rank_company_matches(query: str, results: list[dict]) -> list[dict]:
+    """Order fuzzy name matches so the real hiring entity comes first,
+    using only the name and domain — no AI, no network.
+
+    Clearbit matches on substrings, so "Amazon" also returns Mechanical
+    Turk, aboutamazon.com and amazon.it. Previously only an AI call
+    separated those, which meant search quality collapsed whenever AI was
+    unavailable. This is deterministic, instant, and free, so the AI rerank
+    becomes a refinement rather than a dependency."""
+    q = query.strip().lower()
+    q_compact = re.sub(r"[^a-z0-9]", "", q)
+
+    def score(r: dict) -> tuple:
+        name = (r.get("name") or "").lower()
+        domain = (r.get("domain") or "").lower()
+        label = domain.split(".")[0]
+        tld = domain.rsplit(".", 1)[-1] if "." in domain else ""
+        extra_words = max(0, len(name.split()) - len(q.split()))
+
+        s = 0
+        if name == q:
+            s += 100                      # exact company name
+        elif name.startswith(q):
+            s += 40
+        if label == q_compact:
+            s += 60                       # domain label is exactly the query
+        elif label.startswith(q_compact):
+            s += 20
+
+        # "Amazon Mechanical Turk" / "Google for Creators": the more words
+        # bolted on beyond the query, the more likely it's a sub-brand.
+        s -= extra_words * 18
+
+        if tld in _REGIONAL_TLDS:
+            s -= 30                       # amazon.it, airbnb.fi
+        if label.startswith("about") or label.startswith("blog"):
+            s -= 40                       # aboutamazon.com
+        if tld in ("com", "org", "net"):
+            s += 8
+        if tld == "jobs" or "careers" in domain or "jobs" in label:
+            s += 45                       # amazon.jobs — the hiring entity
+
+        return (-s, len(name))
+
+    return sorted(results, key=score)
 
 
 def _vertex_access_token() -> str | None:
