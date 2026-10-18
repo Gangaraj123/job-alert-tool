@@ -78,6 +78,25 @@ _PAGINATION_CONTROL_RE = re.compile(
 )
 
 
+def _launch_chromium(p):
+    """Launch Chromium, allowing a caller-supplied binary.
+
+    Playwright normally insists on a browser build matching its own
+    version, downloaded from cdn.playwright.dev. Some sandboxes (the Claude
+    Code cloud runner among them) block that CDN outright while shipping
+    their own Chromium at a different build number — so the bundled binary
+    exists but launch() rejects it on version grounds, leaving no usable
+    browser at all. PLAYWRIGHT_CHROMIUM_EXECUTABLE points us straight at a
+    binary and skips that check; unset, behaviour is unchanged."""
+    import os
+
+    executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    if executable:
+        logger.info("launching chromium from PLAYWRIGHT_CHROMIUM_EXECUTABLE=%s", executable)
+        return p.chromium.launch(headless=True, executable_path=executable)
+    return p.chromium.launch(headless=True)
+
+
 def _click_pagination_control(page) -> bool:
     """Tries buttons first, then links with rel="next" or a matching label
     — covers both <button onClick> "Load more" patterns and <a href> numbered
@@ -132,7 +151,7 @@ def _render(url: str) -> tuple[str, str, list[tuple[str, str]]]:
     content (reached the end) or MAX_PAGINATION_ROUNDS is hit — bounded so
     a page with a truly endless feed can't hang the fetch."""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = _launch_chromium(p)
         try:
             page = browser.new_page()
             # "networkidle" waits for ALL background network activity to
@@ -174,7 +193,7 @@ def _fetch_detail_descriptions(urls: list[str], page_url: str) -> dict[str, str]
 
     out: dict[str, str] = {}
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = _launch_chromium(p)
         try:
             # Several pages open in parallel tabs in the one browser —
             # loading 15 detail pages one after another was adding ~15x a
