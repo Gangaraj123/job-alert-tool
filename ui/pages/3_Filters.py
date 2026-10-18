@@ -47,11 +47,11 @@ with col1:
              "exact range; most don't, so Exclude below is the more reliable lever.",
     )
     exclude_terms = _tag_list_input(
-        "Exclude (seniority/title terms)", "exclude_input", filters.get("exclude_terms", []),
+        "Exclude (title terms)", "exclude_input", filters.get("exclude_terms", []),
         help="A job is rejected if its TITLE contains any of these, regardless of role match. "
-             "This is the reliable way to cap seniority (e.g. \"up to ~3 years\") — postings phrase "
-             "exact year-ranges too inconsistently to match on text, but words like \"Senior\"/\"Staff\" "
-             "are consistent.",
+             "Default covers seniority (Senior/Staff/...) and non-full-time roles "
+             "(Intern/PhD/Co-op). An AI check (separate, on the description) also catches "
+             "experience-years and degree-level mismatches these title words can't.",
     )
 
 with col2:
