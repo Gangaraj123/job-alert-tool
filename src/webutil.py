@@ -32,9 +32,35 @@ import requests
 from . import db
 from .config import load_config, load_settings
 
-AI_DAILY_CALL_LIMIT = 50
-
 logger = logging.getLogger("job_alert.webutil")
+
+
+def ai_daily_limit() -> int:
+    """Read at call time, not import time, so editing config.yaml takes
+    effect without restarting the app."""
+    return load_config().get("ai", {}).get("daily_call_limit", 400)
+
+
+def ai_status() -> tuple[bool, str]:
+    """(is_ai_usable, human-readable reason). Lets the UI say plainly when
+    an AI-backed feature is degraded instead of silently returning worse
+    results — the failure mode that made company search look broken."""
+    settings = load_settings()
+    if not settings.gemini_api_key and not (
+        settings.google_vertex_credentials_json and settings.vertex_project
+    ):
+        return False, "No AI backend is configured."
+
+    used = db.ai_calls_used_today()
+    limit = ai_daily_limit()
+    if used >= limit:
+        return False, f"Daily AI call limit reached ({used}/{limit}). Resets at 00:00 UTC."
+
+    now = time.monotonic()
+    if _rate_limited_until and all(t > now for t in _rate_limited_until.values()):
+        return False, "All AI backends are rate-limited right now. Retrying shortly."
+
+    return True, f"{used}/{limit} AI calls used today."
 
 CLEARBIT_AUTOCOMPLETE_URL = "https://autocomplete.clearbit.com/v1/companies/suggest"
 AI_STUDIO_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -275,8 +301,8 @@ def matches_experience_level(
     job."""
     if not description or not description.strip():
         return True
-    if not db.check_and_increment_ai_budget(AI_DAILY_CALL_LIMIT):
-        logger.warning("AI daily call budget (%d) exhausted — skipping experience-level check", AI_DAILY_CALL_LIMIT)
+    if not db.check_and_increment_ai_budget(ai_daily_limit()):
+        logger.warning("AI daily call budget (%d) exhausted — skipping experience-level check", ai_daily_limit())
         return True
 
     prompt = (
@@ -327,8 +353,8 @@ def rerank_company_matches(query: str, results: list[dict]) -> list[dict]:
         return results
     if not settings.gemini_api_key and not (settings.google_vertex_credentials_json and settings.vertex_project):
         return results
-    if not db.check_and_increment_ai_budget(AI_DAILY_CALL_LIMIT):
-        logger.warning("AI daily call budget (%d) exhausted — skipping reranking", AI_DAILY_CALL_LIMIT)
+    if not db.check_and_increment_ai_budget(ai_daily_limit()):
+        logger.warning("AI daily call budget (%d) exhausted — skipping reranking", ai_daily_limit())
         return results
 
     numbered = "\n".join(f"{i}. {r['name']} ({r['domain']})" for i, r in enumerate(results))
@@ -373,8 +399,8 @@ def find_career_urls_via_gemini(company_name: str, domain: str, count: int = 3) 
     settings = load_settings()
     if not settings.gemini_api_key and not (settings.google_vertex_credentials_json and settings.vertex_project):
         return {"status": "not_configured", "urls": []}
-    if not db.check_and_increment_ai_budget(AI_DAILY_CALL_LIMIT):
-        logger.warning("AI daily call budget (%d) exhausted — skipping Gemini discovery", AI_DAILY_CALL_LIMIT)
+    if not db.check_and_increment_ai_budget(ai_daily_limit()):
+        logger.warning("AI daily call budget (%d) exhausted — skipping Gemini discovery", ai_daily_limit())
         return {"status": "budget_exceeded", "urls": []}
 
     prompt = (

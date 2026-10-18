@@ -39,7 +39,6 @@ MAX_PAGE_TEXT_CHARS = 28000
 MAX_PAGINATION_ROUNDS = 8
 MAX_DETAIL_PAGES = 15
 DETAIL_CONCURRENCY = 5
-AI_DAILY_CALL_LIMIT = 50
 
 EXTRACTION_PROMPT = """The following is the visible text of a company careers/jobs page,
 possibly spanning multiple pages/scroll-loads (separated by "--- PAGE BREAK ---").
@@ -251,8 +250,8 @@ def _extract_via_ai(page_text: str, page_url: str, links: list[tuple[str, str]])
 
     if not page_text.strip():
         return []
-    if not db.check_and_increment_ai_budget(AI_DAILY_CALL_LIMIT):
-        logger.warning("AI daily call budget (%d) exhausted — skipping AI text extraction", AI_DAILY_CALL_LIMIT)
+    if not db.check_and_increment_ai_budget(ai_daily_limit()):
+        logger.warning("AI daily call budget (%d) exhausted — skipping AI text extraction", ai_daily_limit())
         return []
 
     # Capped — a page can have hundreds of nav/footer links; most aren't

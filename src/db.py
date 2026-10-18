@@ -490,7 +490,17 @@ def get_filters() -> dict:
     return dict(DEFAULT_FILTERS)
 
 
-def check_and_increment_ai_budget(daily_limit: int = 50) -> bool:
+def ai_calls_used_today() -> int:
+    """Read-only count — does NOT consume budget, so the UI can display
+    usage without affecting it."""
+    import datetime as _dt
+    key = f"ai_calls_{_dt.datetime.now(_dt.UTC).strftime('%Y-%m-%d')}"
+    res = get_client().execute("SELECT value FROM settings WHERE key = ?", [key])
+    rows = _rows_to_dicts(res)
+    return int(rows[0]["value"]) if rows else 0
+
+
+def check_and_increment_ai_budget(daily_limit: int = 400) -> bool:
     """Hard daily cap on AI (Gemini/Vertex) calls, independent of whatever
     provider-side quota or billing alert is in place — defense in depth so a
     bug or unexpected usage spike can't run away. Returns True (and counts

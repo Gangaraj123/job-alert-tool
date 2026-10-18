@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
 from src.pipeline import discover_career_url, preview_detect_and_fetch  # noqa: E402
-from src.webutil import favicon_url, rerank_company_matches, search_companies  # noqa: E402
+from src.webutil import ai_status, favicon_url, rerank_company_matches, search_companies  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from nav import render_sidebar  # noqa: E402
 from style import chip, inject_style, logo_img  # noqa: E402
@@ -113,6 +113,13 @@ with st.expander("Add a company", expanded=not db.list_companies()):
 
         results = st.session_state.get("search_results", [])
         if "searched_query" in st.session_state:
+            # Say so when AI narrowing is off. Without this the user just
+            # sees sub-brands and spin-offs mixed into the results and
+            # reasonably concludes the feature is broken, rather than
+            # degraded for a known, temporary reason.
+            ai_ok, ai_reason = ai_status()
+            if not ai_ok and len(results) > 1:
+                st.caption(f"Showing all name matches — AI narrowing is off. {ai_reason}")
             if not results:
                 st.caption(f"No matches for \"{st.session_state['searched_query']}\" — try a different spelling, or use manual entry below.")
             for r in results:

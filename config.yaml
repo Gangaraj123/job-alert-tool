@@ -15,6 +15,16 @@ fetch:
   # Sitemap discovery tier: cap how many candidate job URLs it will visit.
   max_sitemap_urls: 25
 
+ai:
+  # Safety valve against a runaway loop, NOT a cost-control dial — the
+  # backends have their own quotas. The original 50 was low enough that
+  # ordinary use (discovery + reranking + extraction + the experience
+  # check are four separate call sites) exhausted it, after which every AI
+  # feature degraded SILENTLY: company search quietly returned unranked
+  # results and looked simply broken. Raised, and the UI now says when AI
+  # is unavailable instead of pretending nothing happened.
+  daily_call_limit: 400
+
 discovery:
   # Used by "Add company" career-page discovery, search-result reranking,
   # and the experience/education-level job check. Needs GEMINI_API_KEY

@@ -31,6 +31,18 @@ def render_sidebar(status_note: str | None = None) -> None:
         for path, label, icon in _PAGES:
             st.page_link(path, label=label, icon=icon)
 
-        if status_note:
+        notes = [status_note] if status_note else []
+
+        # Surface AI availability everywhere, not just where a feature
+        # happens to use it — a degraded AI tier otherwise shows up only as
+        # mysteriously worse results on one page.
+        try:
+            from src.webutil import ai_status
+            ai_ok, ai_reason = ai_status()
+            notes.append(("AI on — " if ai_ok else "AI off — ") + ai_reason)
+        except Exception:
+            pass
+
+        if notes:
             st.markdown('<div class="nav-section">Status</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="meta">{status_note}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="meta">{"<br>".join(notes)}</div>', unsafe_allow_html=True)
