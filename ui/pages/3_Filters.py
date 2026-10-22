@@ -67,6 +67,17 @@ with col2:
         help="If checked, a job whose location contains \"remote\" always passes, even if it doesn't match the list above.",
     )
 
+    max_experience_years = st.slider(
+        "Maximum years of experience required", min_value=1, max_value=15,
+        value=int(filters.get("max_experience_years") or 5),
+        help=(
+            "Reads the minimum experience out of the job description and drops "
+            "anything asking for more than this. Titles are unreliable on their "
+            "own — a plain \"Software Engineer\" can want 8+ years. Postings "
+            "that state no requirement are always kept."
+        ),
+    )
+
 if st.button("💾 Save filters", type="primary"):
     db.set_filters({
         "roles": roles,
@@ -74,6 +85,7 @@ if st.button("💾 Save filters", type="primary"):
         "exclude_terms": exclude_terms,
         "locations": locations,
         "always_allow_remote": always_allow_remote,
+        "max_experience_years": max_experience_years,
     })
     st.success("Saved.")
     st.rerun()

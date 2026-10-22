@@ -1,6 +1,9 @@
-"""Cheap pre-filter on role/location, applied before a job is stored. Filter
-values come from db.get_filters() — editable from the UI's Filters page."""
+"""Cheap pre-filter on role/location/experience, applied before a job is
+stored. Filter values come from db.get_filters() — editable from the UI's
+Filters page."""
 from __future__ import annotations
+
+from .experience import within_experience_range
 
 
 def _matches_any(haystack: str, needles: list[str]) -> bool:
@@ -25,6 +28,15 @@ def passes_filters(job: dict, filters_cfg: dict) -> bool:
         # Engineer" and "Corporate Network Engineering" both passed that way.
         # A job's role is its title; the description describes the work.
         if not _matches_any(job.get("title", ""), keywords):
+            return False
+
+    # Experience ceiling. Titles lie about level -- a plain "Software
+    # Engineer" at Stripe can want 8+ years -- so this reads the stated
+    # minimum out of the description. Postings that don't state one are
+    # kept: missing a real match is worse than showing one extra.
+    max_years = filters_cfg.get("max_experience_years")
+    if max_years:
+        if not within_experience_range(job.get("description", ""), int(max_years)):
             return False
 
     if locations:

@@ -108,6 +108,9 @@ DEFAULT_FILTERS = {
         "intern", "internship", "phd", "doctoral", "co-op",
     ],
     "always_allow_remote": True,
+    # Upper bound on the years of experience a posting may demand. Postings
+    # that state no requirement are always kept.
+    "max_experience_years": 5,
 }
 
 
