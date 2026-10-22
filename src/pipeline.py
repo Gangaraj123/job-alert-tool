@@ -408,6 +408,12 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
 
     db.init_schema()
     cfg = load_config()
+    # Pick up registry entries added since these companies were saved, so a
+    # name stored before we knew how to fetch it starts working on its own.
+    adopted = db.sync_from_registry()
+    if adopted:
+        logger.info("Adopted registry details for %d company(ies)", adopted)
+
     all_companies = db.list_companies(enabled_only=True)
     # Pending companies are names the user added that we haven't worked out
     # how to fetch yet. Skipping them keeps them out of the broken count —

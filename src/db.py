@@ -599,3 +599,38 @@ def get_open_jobs() -> list[dict]:
         "ORDER BY company_name, title"
     )
     return _rows_to_dicts(res)
+
+
+def sync_from_registry() -> int:
+    """Adopt registry details for companies that now have an entry.
+
+    A company saved to the upcoming list before the registry knew it keeps
+    whatever it was given at the time — usually no logo and method 'pending'.
+    Nothing re-read the registry afterwards, so adding the entry later had no
+    effect on the stored row. Running this on every pipeline start means an
+    entry added today fixes companies added weeks ago.
+    """
+    from . import registry
+
+    updated = 0
+    for company in list_companies():
+        entry = registry.lookup(company["name"])
+        if not entry:
+            continue
+
+        fields: dict[str, Any] = {}
+        logo = registry.logo_for(entry["domain"])
+        if logo and company.get("logo_url") != logo:
+            fields["logo_url"] = logo
+        # Don't touch a method that was set deliberately elsewhere; only fill
+        # in the ones still sitting at their placeholder.
+        if company.get("method") in (None, "", registry.PENDING) and \
+                entry["method"] != registry.PENDING:
+            fields["method"] = entry["method"]
+            if entry.get("careers_url") and not company.get("url"):
+                fields["url"] = entry["careers_url"]
+
+        if fields:
+            update_company(company["id"], **fields)
+            updated += 1
+    return updated

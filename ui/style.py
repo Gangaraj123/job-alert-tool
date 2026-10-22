@@ -242,6 +242,14 @@ img.company-logo {
     background: var(--surface);
     padding: 2px;
 }
+.row-ident {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+}
+.row-ident .row-sub { word-break: break-all; }
+
 .row-title {
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
@@ -293,7 +301,6 @@ img.company-logo {
    The hosting toolbar (Fork / GitHub / Manage app) and the corner badge
    belong to the platform, not to this app, and they sit on top of page
    content. Hidden so the dashboard reads as its own thing. */
-[data-testid="stToolbar"],
 [data-testid="stToolbarActions"],
 [data-testid="stAppDeployButton"],
 [data-testid="stStatusWidget"],
@@ -322,8 +329,22 @@ a[href*="streamlit.io"][target="_blank"] {
   display: none !important;
 }
 
-/* The header still reserves vertical space once emptied. */
-header[data-testid="stHeader"] { height: 0; background: transparent; }
+/* The sidebar's expand button lives inside the toolbar, so the toolbar
+   itself must stay displayed -- hiding it wholesale left no way to reopen
+   the nav on mobile once collapsed. Only the platform's own actions go. */
+[data-testid="stToolbar"] { background: transparent; }
+[data-testid="stExpandSidebarButton"],
+[data-testid="stExpandSidebarButton"] * ,
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] * {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Keep the header transparent but let it keep its height: it hosts the
+   expand control, and collapsing it to zero clipped the button away. */
+header[data-testid="stHeader"] { background: transparent; }
 </style>
 
 """
