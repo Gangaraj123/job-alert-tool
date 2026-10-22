@@ -57,7 +57,9 @@ companies:
   # Left as `pending` deliberately: better an honest gap than a fetcher that
   # silently returns nothing and looks healthy.
   - {name: Atlassian,   domain: atlassian.com,   method: pending}
-  - {name: Confluent,   domain: confluent.io,    method: pending}
+  # No public ATS API, but their listing page renders and yields job links.
+  - {name: Confluent,   domain: confluent.io,    method: auto,
+     careers_url: "https://careers.confluent.io/jobs"}
   - {name: HashiCorp,   domain: hashicorp.com,   method: pending}
   - {name: Razorpay,    domain: razorpay.com,    method: pending}
   - {name: Zerodha,     domain: zerodha.com,     method: pending}
@@ -70,8 +72,13 @@ companies:
   - {name: Zepto,       domain: zepto.co.in,     method: pending}
   - {name: Netflix,     domain: netflix.com,     method: pending}
   # DocuSign runs iCIMS/Jibe behind careers.docusign.com — no public JSON API
-  # found yet.
+  # found, and the listing page did not render job links either.
   - {name: DocuSign,    domain: docusign.com,    method: pending}
+  # Microsoft retired its public search API (gcsservices.careers.microsoft.com
+  # now serves an Azure CDN cert for a different host). The SPA renders, so
+  # the browser tier handles it.
+  - {name: Microsoft,   domain: microsoft.com,   method: auto,
+     careers_url: "https://jobs.careers.microsoft.com/global/en/search?lc=India"}
   # LinkedIn HAS a Lever board (jobs.lever.co/linkedin) but it is a test
   # tenant: "Deauth Test", "Bug Bash Job 2". Deliberately NOT wired up --
   # it would feed fake listings that look entirely real.

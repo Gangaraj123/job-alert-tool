@@ -42,15 +42,43 @@ df = pd.DataFrame(jobs)
 df["is_closed"] = df["closed_at"].notna()
 df["done"] = df["done_at"].notna()
 
+# first_seen_at is stored UTC; bucket by IST calendar day so "Today" means
+# today where the user is, not wherever the server thinks it is.
+df["found_date"] = (
+    pd.to_datetime(df["first_seen_at"], errors="coerce", utc=True)
+    .dt.tz_convert("Asia/Kolkata")
+    .dt.date
+)
+
+_WINDOWS = {
+    "Any time": None,
+    "Today": 0,
+    "Last 3 days": 2,
+    "Last 7 days": 6,
+    "Last 30 days": 29,
+}
+
 companies = sorted(df["company_name"].dropna().unique().tolist())
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2, col3, col4 = st.columns([2, 1.3, 1, 1])
 company_filter = col1.multiselect("Company", companies)
-hide_closed = col2.checkbox("Hide closed/expired", value=True)
-hide_done = col3.checkbox("Hide done", value=False)
+found_window = col2.selectbox(
+    "Found", list(_WINDOWS), index=0,
+    help="When the role first showed up in a scan, not when it was posted.",
+)
+hide_closed = col3.checkbox("Hide closed/expired", value=True)
+hide_done = col4.checkbox("Hide done", value=False)
 
 filtered = df
 if company_filter:
     filtered = filtered[filtered["company_name"].isin(company_filter)]
+
+days_back = _WINDOWS[found_window]
+if days_back is not None:
+    from datetime import datetime, timedelta, timezone
+
+    today_ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date()
+    cutoff = today_ist - timedelta(days=days_back)
+    filtered = filtered[filtered["found_date"].notna() & (filtered["found_date"] >= cutoff)]
 if hide_closed:
     filtered = filtered[~filtered["is_closed"]]
 if hide_done:
