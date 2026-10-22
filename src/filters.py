@@ -20,8 +20,11 @@ def passes_filters(job: dict, filters_cfg: dict) -> bool:
         return False
 
     if keywords:
-        text = f"{job.get('title', '')} {job.get('description', '')}"
-        if not _matches_any(text, keywords):
+        # Title only. Matching the description too let any role through whose
+        # blurb happened to say "software engineering" — "Network Development
+        # Engineer" and "Corporate Network Engineering" both passed that way.
+        # A job's role is its title; the description describes the work.
+        if not _matches_any(job.get("title", ""), keywords):
             return False
 
     if locations:

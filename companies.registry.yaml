@@ -33,6 +33,7 @@ companies:
   - {name: GitLab,      domain: gitlab.com,      method: "greenhouse:gitlab"}          # 232
   - {name: InMobi,      domain: inmobi.com,      method: "greenhouse:inmobi"}          # 80
   - {name: Groww,       domain: groww.in,        method: "greenhouse:groww"}           # 10
+  - {name: Commvault,   domain: commvault.com,   method: "greenhouse:commvault"}       # 51
 
   - {name: Notion,      domain: notion.so,       method: "ashby:notion"}               # 137
   - {name: OpenAI,      domain: openai.com,      method: "ashby:openai"}               # 813
@@ -68,4 +69,11 @@ companies:
   - {name: Dream11,     domain: dream11.com,     method: pending}
   - {name: Zepto,       domain: zepto.co.in,     method: pending}
   - {name: Netflix,     domain: netflix.com,     method: pending}
+  # DocuSign runs iCIMS/Jibe behind careers.docusign.com — no public JSON API
+  # found yet.
+  - {name: DocuSign,    domain: docusign.com,    method: pending}
+  # LinkedIn HAS a Lever board (jobs.lever.co/linkedin) but it is a test
+  # tenant: "Deauth Test", "Bug Bash Job 2". Deliberately NOT wired up --
+  # it would feed fake listings that look entirely real.
+  - {name: LinkedIn,    domain: linkedin.com,    method: pending}
   - {name: Uber,        domain: uber.com,        method: pending}
