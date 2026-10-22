@@ -34,6 +34,10 @@ companies:
   - {name: InMobi,      domain: inmobi.com,      method: "greenhouse:inmobi"}          # 80
   - {name: Groww,       domain: groww.in,        method: "greenhouse:groww"}           # 10
   - {name: Commvault,   domain: commvault.com,   method: "greenhouse:commvault"}       # 51
+  - {name: Coupang,     domain: coupang.com,     method: "greenhouse:coupang"}         # 690
+  - {name: MOLOCO,      domain: moloco.com,      method: "greenhouse:moloco"}          # 42
+  - {name: Blink Health, domain: blinkhealth.com, method: "greenhouse:blinkhealth"}    # 75
+  - {name: Apollo.io,   domain: apollo.io,       method: "greenhouse:apolloio"}        # 53
 
   - {name: Notion,      domain: notion.so,       method: "ashby:notion"}               # 137
   - {name: OpenAI,      domain: openai.com,      method: "ashby:openai"}               # 813
@@ -83,4 +87,14 @@ companies:
   # tenant: "Deauth Test", "Bug Bash Job 2". Deliberately NOT wired up --
   # it would feed fake listings that look entirely real.
   - {name: LinkedIn,    domain: linkedin.com,    method: pending}
+  # Uber's SmartRecruiters tenant holds a single "Test UAT" posting -- a QA
+  # board, like LinkedIn's. Not wired up.
   - {name: Uber,        domain: uber.com,        method: pending}
+  # Wayfair's SmartRecruiters tenant has one unrelated retail role; the real
+  # board is elsewhere.
+  - {name: Wayfair,     domain: wayfair.com,     method: pending}
+  - {name: Broadcom,    domain: broadcom.com,    method: pending}
+  - {name: Meta,        domain: meta.com,        method: pending}
+  - {name: Deel,        domain: deel.com,        method: pending}
+  - {name: Apple,       domain: apple.com,       method: pending}
+  - {name: Indeed,      domain: indeed.com,      method: pending}

@@ -90,11 +90,21 @@ def _launch_chromium(p):
     binary and skips that check; unset, behaviour is unchanged."""
     import os
 
+    from .base import BrowserUnavailable
+
     executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
     if executable:
         logger.info("launching chromium from PLAYWRIGHT_CHROMIUM_EXECUTABLE=%s", executable)
-        return p.chromium.launch(headless=True, executable_path=executable)
-    return p.chromium.launch(headless=True)
+        try:
+            return p.chromium.launch(headless=True, executable_path=executable)
+        except Exception as e:
+            raise BrowserUnavailable(str(e)) from e
+    try:
+        return p.chromium.launch(headless=True)
+    except Exception as e:
+        # Typically "Executable doesn't exist" on hosts where no browser was
+        # ever installed, e.g. Streamlit Community Cloud.
+        raise BrowserUnavailable(str(e)) from e
 
 
 def _click_pagination_control(page) -> bool:

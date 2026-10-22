@@ -467,6 +467,14 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
 
     for company, normalized, error in results:
         if error is not None:
+            # A missing browser is an environment limitation, not a broken
+            # company: the scheduled run has Chromium and fetches these fine.
+            # Leave the previous status alone rather than flagging them.
+            if "BROWSER_UNAVAILABLE" in error:
+                logger.info(
+                    "%s: skipped, no browser in this environment", company["name"]
+                )
+                continue
             db.set_company_run_status(company["id"], "error", error=error)
             companies_broken += 1
             continue  # per-company error isolation: one bad fetcher never aborts the run

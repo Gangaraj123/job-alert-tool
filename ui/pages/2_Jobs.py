@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import db  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from nav import render_sidebar  # noqa: E402
-from style import chip, inject_style  # noqa: E402
+from style import chip, logo_img, inject_style  # noqa: E402
 from timeutil import to_ist  # noqa: E402
 
 sync_secrets()
@@ -33,7 +33,18 @@ def _recent_jobs():
     return db.list_recent_jobs(limit=1000)
 
 
+@st.cache_data(ttl=300)
+def _logos() -> dict[str, str]:
+    """company name -> logo URL. Jobs store the company name only, so the
+    logo is looked up once per render rather than joined per row."""
+    return {
+        c["name"]: c.get("logo_url") or ""
+        for c in db.list_companies()
+    }
+
+
 jobs = _recent_jobs()
+_company_logos = _logos()
 if not jobs:
     st.info("No roles found yet. Start a check from the Overview page.")
     st.stop()
@@ -99,7 +110,8 @@ if filtered.empty:
 else:
     for _, job in filtered.iterrows():
         with st.container(border=True):
-            left, action = st.columns([5, 1])
+            # 1/6th of a 390px phone is ~55px, which clipped "Open" to "O...".
+            left, action = st.columns([3.1, 1.15])
             title = str(job.get("title") or "Untitled role")
             company = str(job.get("company_name") or "Company")
             location = str(job.get("location") or "Location not stated")
@@ -109,7 +121,9 @@ else:
                 badges.append(chip("Done", "neutral"))
 
             left.markdown(
-                f'<div class="row-title">{title}</div>'
+                '<div class="row-ident">'
+                + logo_img(_company_logos.get(company, ""), size=26)
+                + f'<div class="row-title">{title}</div></div>'
                 f'<div class="meta"><b>{company}</b> — {location}</div>'
                 + " ".join(badges)
                 + f'<span class="meta">&nbsp; Found {to_ist(job.get("first_seen_at"))}</span>',

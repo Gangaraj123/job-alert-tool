@@ -272,19 +272,29 @@ img.company-logo {
 
 @media (max-width: 640px) {
     .block-container {
-        padding: 1rem 0.9rem 3rem !important;
+        padding: 3.2rem 0.9rem 3rem !important;
     }
     h1 { font-size: 1.5rem !important; }
     h2 { font-size: 1.2rem !important; }
     .lead { font-size: 0.94rem; }
 
-    /* Streamlit keeps columns side-by-side at any width, which squeezes
-       6-column rows into unreadable slivers on a phone. Stack them. */
-    div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.4rem !important; }
-    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    /* Streamlit keeps columns side-by-side at any width. Dense rows (4+
+       columns) become unreadable slivers, so those stack; rows of two or
+       three small controls stay on one line, which is what a phone user
+       expects and avoids a column of full-width buttons. */
+    div[data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; gap: 0.5rem !important; }
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"]:nth-child(4))
+      > div[data-testid="stColumn"] {
         min-width: 100% !important;
         flex: 1 1 100% !important;
     }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] { min-width: 0; }
+
+    /* Cards: tighten the stacked spacing Streamlit leaves between blocks. */
+    div[data-testid="stVerticalBlockBorderWrapper"] { padding: 0.15rem 0; }
+    div[data-testid="stVerticalBlock"] { gap: 0.45rem !important; }
+    .row-ident { gap: 0.55rem; }
+    .chip { margin-bottom: 0.15rem; display: inline-block; }
 
     /* Comfortable touch targets */
     button, [role="button"] { min-height: 44px; }

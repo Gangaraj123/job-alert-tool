@@ -18,6 +18,21 @@ class FetchError(Exception):
     """Raised when a fetch tier fails outright for a company."""
 
 
+class BrowserUnavailable(FetchError):
+    """No usable Chromium in this environment.
+
+    Distinct from a normal FetchError because it says nothing about the
+    company: the daily GitHub Actions run installs a browser and fetches it
+    fine. Marking the company broken on that basis would be wrong, so
+    callers skip it instead.
+    """
+
+    def __str__(self) -> str:  # noqa: D105
+        # Prefixed so the reason survives being flattened to a string as it
+        # passes back through the per-company error channel.
+        return f"BROWSER_UNAVAILABLE: {super().__str__()}"
+
+
 def _retrying():
     return retry(
         reraise=True,

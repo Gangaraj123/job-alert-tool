@@ -127,16 +127,13 @@ else:
     st.subheader(f"Tracked companies ({len(companies)})")
     for c in companies:
         with st.container(border=True):
-            cols = st.columns([3.5, 3, 1.3, 1.3, 0.7])
+            info, controls = st.container(), st.container()
             # Logo and name share one block rather than separate columns: on a
             # phone the columns stack, and a 30px logo given its own full-width
             # row collided with the name underneath it.
             url = c["url"] or ""
-            link = (
-                f'<div class="row-sub"><a href="{url}">{url}</a></div>'
-                if url else '<div class="row-sub">No careers URL yet</div>'
-            )
-            cols[0].markdown(
+            link = f'<div class="row-sub"><a href="{url}">{url}</a></div>' if url else ""
+            info.markdown(
                 '<div class="row-ident">'
                 + logo_img(c.get("logo_url") or (favicon_url(url) if url else ""))
                 + f'<div><div class="row-title">{c["name"]}</div>{link}</div>'
@@ -165,20 +162,22 @@ else:
                 ))
                 chips.append(chip(f"of {scanned} scanned", "neutral"))
 
-            cols[1].markdown(
+            checked = c.get("last_checked_at")
+            info.markdown(
                 " ".join(chips)
-                + f'<div class="meta">Checked {to_ist(c.get("last_checked_at"))}</div>',
+                + (f'<div class="meta">Checked {to_ist(checked)}</div>' if checked else ""),
                 unsafe_allow_html=True,
             )
             if c.get("last_error"):
-                cols[1].caption(str(c["last_error"])[:160])
+                info.caption(str(c["last_error"])[:160])
 
-            new_enabled = cols[2].toggle("Active", value=bool(c["enabled"]), key=f"enabled_{c['id']}")
+            act = controls.columns([1, 1, 0.6])
+            new_enabled = act[0].toggle("Active", value=bool(c["enabled"]), key=f"enabled_{c['id']}")
             if new_enabled != bool(c["enabled"]):
                 db.update_company(c["id"], enabled=1 if new_enabled else 0)
                 st.rerun()
 
-            if cols[3].button("Re-check", key=f"recheck_{c['id']}", help="Detect the ATS and test-fetch right now", use_container_width=True):
+            if act[1].button("Re-check", key=f"recheck_{c['id']}", help="Detect the ATS and test-fetch right now", use_container_width=True):
                 with st.spinner(f"Checking {c['name']}…"):
                     result = preview_detect_and_fetch(c["url"])
                 db.set_company_run_status(
@@ -188,7 +187,7 @@ else:
                 )
                 st.rerun()
 
-            with cols[4].popover("⚙️"):
+            with act[2].popover("⚙️"):
                 new_url = st.text_input("Career page URL", value=c["url"], key=f"url_{c['id']}")
                 if st.button("Save URL", key=f"save_{c['id']}"):
                     db.update_company(
