@@ -99,18 +99,24 @@ def _send(subject: str, html_body: str) -> bool:
         logger.warning("Email not configured (GMAIL_ADDRESS/GMAIL_APP_PASSWORD missing); skipping send")
         return False
 
-    to_addr = settings.digest_to_email or settings.gmail_address
+    # DIGEST_TO_EMAIL may list several addresses, comma- or semicolon-separated.
+    raw = settings.digest_to_email or settings.gmail_address
+    recipients = [a.strip() for a in raw.replace(";", ",").split(",") if a.strip()]
+    if not recipients:
+        logger.warning("No digest recipient configured; skipping send")
+        return False
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.gmail_address
-    msg["To"] = to_addr
+    msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html_body, "html"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
             server.login(settings.gmail_address, settings.gmail_app_password)
-            server.sendmail(settings.gmail_address, [to_addr], msg.as_string())
+            server.sendmail(settings.gmail_address, recipients, msg.as_string())
+        logger.info("Digest sent to %d recipient(s)", len(recipients))
         return True
     except Exception as e:
         logger.error("Failed to send email (%s): %s", subject, e)
