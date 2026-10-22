@@ -25,10 +25,18 @@ PATTERNS: list[tuple[str, re.Pattern]] = [
     ("smartrecruiters", re.compile(r"careers\.smartrecruiters\.com/(?P<slug>[\w-]+)")),
     ("workday", re.compile(r"(?P<slug>[\w-]+)\.(?P<host>wd\d+|myworkdayjobs)\.com/(?:en-US/)?(?P<site>[\w-]+)")),
     ("recruitee", re.compile(r"(?P<slug>[\w-]+)\.recruitee\.com")),
+    # Self-hosted boards that still expose a usable public JSON API. The
+    # slug is a country code rather than a tenant name, so the default
+    # below is what gets used unless a caller overrides it.
+    ("amazon", re.compile(r"(?:www\.)?amazon\.jobs(?P<slug>)")),
 ]
 
 
 def _identifier_from_match(ats_type: str, m: re.Match) -> str:
+    if ats_type == "amazon":
+        # Amazon's catalogue is global and far larger than the API will
+        # page through, so it is scoped by country; India by default.
+        return "IND"
     if ats_type == "workday":
         # Workday needs tenant + site + host variant (wd1/wd3/...) to build
         # correct URLs — encoded into one identifier string so the (ats_type,
@@ -57,6 +65,11 @@ def detect_from_html(html: str) -> tuple[str, str] | None:
 
 def detect_ats(url: str) -> tuple[str, str] | None:
     """Returns (ats_type, identifier) or None if undetectable."""
+    if not (url or "").strip():
+        # Registry-backed companies are fetched by method alone and carry no
+        # careers URL, so there is nothing to detect and nothing wrong.
+        return None
+
     direct = detect_from_url(url)
     if direct:
         logger.info("ATS detected from URL: %s (%s)", direct[0], direct[1])

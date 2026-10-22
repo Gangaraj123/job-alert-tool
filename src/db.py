@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS companies (
     last_error TEXT,
     last_job_count INTEGER DEFAULT 0,
     logo_url TEXT,
+    -- How to fetch this company, from companies.registry.yaml:
+    -- "greenhouse:databricks", "amazon:IND", "auto", or "pending".
+    method TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -145,6 +148,10 @@ MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN closed_at TEXT",
     "ALTER TABLE jobs ADD COLUMN done_at TEXT",
     "ALTER TABLE companies ADD COLUMN logo_url TEXT",
+    # Companies added before the registry existed were all fetched by
+    # auto-detection, so 'auto' preserves their behaviour exactly; only
+    # newly added unknown names become 'pending'.
+    "ALTER TABLE companies ADD COLUMN method TEXT NOT NULL DEFAULT 'auto'",
     # Must run after the ALTERs above add found_in_run_id, since on an
     # existing DB the column won't exist until that migration runs.
     "CREATE INDEX IF NOT EXISTS idx_jobs_run ON jobs(found_in_run_id)",
@@ -227,12 +234,27 @@ def upsert_company_seed(name: str, url: str) -> None:
     )
 
 
-def add_company(name: str, url: str) -> int:
+def add_company(name: str, url: str = "", method: str | None = None) -> int:
+    """Add a company by name. `url` and `method` are optional: an unknown
+    name is stored as `pending` with no URL rather than being rejected, so
+    adding a company always succeeds and the gap becomes a visible to-do."""
+    from . import registry
     from .webutil import favicon_url
+
+    entry = registry.lookup(name)
+    if entry:
+        # Registry wins on spelling too, so "amazon" is stored as "Amazon".
+        name = entry["name"]
+        method = method or entry["method"]
+        logo = registry.logo_for(entry["domain"])
+    else:
+        method = method or (registry.AUTO if url else registry.PENDING)
+        logo = favicon_url(url) if url else None
+
     client = get_client()
     res = client.execute(
-        "INSERT INTO companies (name, url, logo_url) VALUES (?, ?, ?)",
-        [name, url, favicon_url(url)],
+        "INSERT INTO companies (name, url, logo_url, method) VALUES (?, ?, ?, ?)",
+        [name, url, logo, method],
     )
     return res.last_insert_rowid
 

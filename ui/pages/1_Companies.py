@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import db  # noqa: E402
 from src.pipeline import discover_career_url, preview_detect_and_fetch  # noqa: E402
+from src import registry  # noqa: E402
 from src.webutil import ai_status, favicon_url, rerank_company_matches, search_companies  # noqa: E402
 from bootstrap import sync_secrets  # noqa: E402
 from nav import render_sidebar  # noqa: E402
@@ -22,6 +23,15 @@ db.init_schema()
 render_sidebar()
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _reset_search() -> None:
+    """Clear the search box and its cached results after a successful add,
+    so the page returns to a clean state instead of re-offering a company
+    that is now tracked."""
+    for key in ("picked_company", "discovery", "search_query",
+                "search_results", "searched_query"):
+        st.session_state.pop(key, None)
+
+
 def _probe(name: str, domain: str):
     """Cached so re-renders (every keystroke commit, every toggle) don't
     re-hit the ATS APIs for results already on screen."""
@@ -131,6 +141,35 @@ with st.expander("Add a company", expanded=not db.list_companies()):
                 st.session_state["search_results"] = rerank_company_matches(query, raw_results)
             st.session_state["searched_query"] = query
 
+        # Registry first. A curated entry needs no detection, no probing and
+        # no network round-trip, so a known name is one click from tracked.
+        known = registry.lookup(query) if query else None
+        if known:
+            ats, _ = registry.parse_method(known["method"])
+            with st.container(border=True):
+                row = st.columns([0.6, 4, 1.4])
+                row[0].markdown(
+                    logo_img(registry.logo_for(known["domain"]) or ""),
+                    unsafe_allow_html=True,
+                )
+                label = (
+                    chip(f"{ats} · verified", "ok") if ats
+                    else chip("needs setup", "warn")
+                )
+                row[1].markdown(
+                    f"**{known['name']}** &nbsp; {label}<br>"
+                    f"<span class='muted'>{known['domain'] or ''}</span>",
+                    unsafe_allow_html=True,
+                )
+                already = db.get_company_by_name(known["name"])
+                if already:
+                    row[2].button("Already tracked", disabled=True, key="known_dupe")
+                elif row[2].button("Add", type="primary", key="known_add"):
+                    db.add_company(known["name"])
+                    st.success(f"Added {known['name']}.")
+                    _reset_search()
+                    st.rerun()
+
         results = st.session_state.get("search_results", [])
         if "searched_query" in st.session_state:
             # Say so when AI narrowing is off. Without this the user just
@@ -143,8 +182,28 @@ with st.expander("Add a company", expanded=not db.list_companies()):
                     "Ranked by name and domain — best match first. "
                     f"AI narrowing is off ({ai_reason})"
                 )
-            if not results:
-                st.caption(f"No matches for \"{st.session_state['searched_query']}\" — try a different spelling, or use manual entry below.")
+            if not results and not known:
+                st.caption(
+                    f"No matches for \"{st.session_state['searched_query']}\"."
+                )
+                # Saving the plain name is always better than making the user
+                # hunt for a careers URL. It gets picked up next time the
+                # registry is reviewed; until then it is simply skipped.
+                if st.button(
+                    f"Save \"{st.session_state['searched_query']}\" for later",
+                    key="save_pending",
+                ):
+                    name = st.session_state["searched_query"]
+                    if db.get_company_by_name(name):
+                        st.warning(f"{name} is already in the list.")
+                    else:
+                        db.add_company(name)
+                        st.success(
+                            f"Saved {name}. It will not be scanned until a "
+                            "fetch method is added for it."
+                        )
+                        _reset_search()
+                        st.rerun()
 
             for r in results:
                 with st.container(border=True):

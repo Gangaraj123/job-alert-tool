@@ -136,6 +136,7 @@ def fetch(ats_type: str, identifier: str, **kwargs) -> list[dict]:
         "smartrecruiters": fetch_smartrecruiters,
         "workday": fetch_workday,
         "recruitee": fetch_recruitee,
+        "amazon": fetch_amazon,
     }.get(ats_type)
     if fn is None:
         raise FetchError(f"Unsupported ATS type: {ats_type}")
@@ -294,4 +295,67 @@ def fetch_recruitee(slug: str, **_) -> list[dict]:
             "url": j.get("careers_url", ""),
             "description": j.get("description", ""),
         })
+    return jobs
+
+
+# Amazon runs its own job board rather than a third-party ATS, but exposes a
+# clean public JSON endpoint behind it. Paginated 100 at a time; the API caps
+# out well before Amazon's full global catalogue, so we constrain by country
+# rather than pulling tens of thousands of irrelevant rows.
+_AMAZON_SEARCH = "https://www.amazon.jobs/search.json"
+_AMAZON_PAGE = 100
+_AMAZON_MAX = 1000
+
+
+def fetch_amazon(identifier: str = "IND", **_) -> list[dict]:
+    """`identifier` is an ISO-3166 alpha-3 country code (default India).
+
+    Amazon's own site is JS-rendered and hostile to scraping; this endpoint
+    is what that page itself calls, so it needs no browser and returns the
+    qualifications text that the level filter depends on.
+    """
+    jobs: list[dict] = []
+    offset = 0
+    while offset < _AMAZON_MAX:
+        params = {
+            "normalized_country_code[]": identifier,
+            "result_limit": _AMAZON_PAGE,
+            "offset": offset,
+            "sort": "recent",
+        }
+        try:
+            data = http_get_json(_AMAZON_SEARCH, params=params)
+        except Exception as e:
+            if jobs:
+                # Partial results beat none: a page failing deep into
+                # pagination shouldn't discard everything already collected.
+                logger.warning("amazon: stopped at offset %d: %s", offset, e)
+                break
+            raise FetchError(f"amazon: {e}") from e
+
+        batch = data.get("jobs") or []
+        if not batch:
+            break
+
+        for j in batch:
+            city, country = j.get("city"), j.get("country_code")
+            location = ", ".join(p for p in (city, country) if p)
+            path = j.get("job_path") or ""
+            jobs.append({
+                "title": j.get("title", ""),
+                "location": location or None,
+                "url": f"https://www.amazon.jobs{path}" if path else "",
+                # Qualifications carry the years-of-experience and degree
+                # requirements; the bare description often does not.
+                "description": " ".join(filter(None, (
+                    j.get("description"),
+                    j.get("basic_qualifications"),
+                    j.get("preferred_qualifications"),
+                ))),
+            })
+
+        if len(batch) < _AMAZON_PAGE or len(jobs) >= int(data.get("hits") or 0):
+            break
+        offset += _AMAZON_PAGE
+
     return jobs

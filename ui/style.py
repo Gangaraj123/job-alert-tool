@@ -298,8 +298,30 @@ def inject_style() -> None:
 
 def logo_img(url: str, size: int = 30) -> str:
     """<img> with the shared company-logo styling, for use inside
-    st.markdown(..., unsafe_allow_html=True)."""
-    return f'<img class="company-logo" src="{url}" width="{size}" height="{size}" alt="">'
+    st.markdown(..., unsafe_allow_html=True).
+
+    Neither free icon service covers every company — DuckDuckGo misses several
+    Indian firms that Google has, and vice versa — so the tag falls back from
+    one to the other and finally removes itself, leaving the caller's
+    lettermark visible rather than a broken-image glyph.
+    """
+    from urllib.parse import urlparse
+
+    fallback = ""
+    host = urlparse(url).netloc
+    if "duckduckgo" in host:
+        domain = url.rsplit("/", 1)[-1].removesuffix(".ico")
+        google = f"https://www.google.com/s2/favicons?domain={domain}&amp;sz=128"
+        fallback = (
+            f"this.onerror=function(){{this.remove()}};this.src='{google}'"
+        )
+    else:
+        fallback = "this.remove()"
+
+    return (
+        f'<img class="company-logo" src="{url}" width="{size}" height="{size}" '
+        f'alt="" onerror="{fallback}">'
+    )
 
 
 def chip(label: str, kind: str = "neutral") -> str:

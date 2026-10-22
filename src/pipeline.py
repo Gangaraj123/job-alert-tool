@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from . import db
+from . import db, registry
 from .config import load_config
 from .detector import detect_ats
 from .digest import build_digest_html, send_email_digest
@@ -73,6 +73,21 @@ def fetch_company_jobs_tiered(company: dict, cfg: dict) -> tuple[list[dict], str
     either errors or is ambiguous-empty — the caller marks the company as
     broken rather than treating this as fatal for the whole run."""
     errors = []
+
+    # The registry's method is authoritative when present: it was verified by
+    # hand, so it is tried before — and instead of — re-detecting the ATS.
+    ats_type, identifier = registry.parse_method(company.get("method") or "")
+    if ats_type:
+        try:
+            return ats_api.fetch(ats_type, identifier), "ats_api"
+        except FetchError as e:
+            # A registry entry that stops working is worth surfacing: it
+            # means the slug changed, not that this company is unfetchable.
+            logger.warning(
+                "%s: registry method %r failed (%s) — falling back to detection",
+                company["name"], company.get("method"), e,
+            )
+            errors.append(str(e))
 
     if company.get("ats_type") in ats_api.SUPPORTED:
         try:
@@ -393,8 +408,17 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
 
     db.init_schema()
     cfg = load_config()
-    companies = db.list_companies(enabled_only=True)
-    logger.info("Running pipeline for %d enabled companies", len(companies))
+    all_companies = db.list_companies(enabled_only=True)
+    # Pending companies are names the user added that we haven't worked out
+    # how to fetch yet. Skipping them keeps them out of the broken count —
+    # they're a backlog item, not a malfunction — while still showing up in
+    # the UI's "needs setup" list.
+    companies = [c for c in all_companies if c.get("method") != registry.PENDING]
+    pending = len(all_companies) - len(companies)
+    logger.info(
+        "Running pipeline for %d enabled companies (%d pending, skipped)",
+        len(companies), pending,
+    )
 
     run_id = db.create_run(triggered_by=triggered_by)
     started = _time.monotonic()

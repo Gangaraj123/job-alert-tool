@@ -88,8 +88,16 @@ def domain_from_url(url: str) -> str:
 
 
 def favicon_url(url: str, size: int = 64) -> str:
+    """Company logo for a domain or URL.
+
+    DuckDuckGo's icon service returns the site's real favicon at full size
+    (typically 10-20KB) where Google's equivalent downsamples to a few hundred
+    bytes regardless of the `sz` asked for. Both are keyless and free; neither
+    needs an account. `size` is kept in the signature for call-site
+    compatibility — DuckDuckGo serves one resolution and the UI scales it.
+    """
     domain = domain_from_url(url)
-    return f"https://www.google.com/s2/favicons?domain={domain}&sz={size}"
+    return f"https://icons.duckduckgo.com/ip3/{domain}.ico"
 
 
 def search_companies(query: str, limit: int = 8) -> list[dict]:

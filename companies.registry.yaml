@@ -1,0 +1,71 @@
+# Curated company registry.
+#
+# Adding a company in the UI only needs its NAME. If the name matches an entry
+# here, the company is tracked immediately with a verified fetch method. If it
+# doesn't, it is still saved — as `pending` — and shows up in the UI's "needs
+# setup" list, to be given an entry here whenever we next look at it. Adding a
+# company must never fail or make the user hunt for a URL.
+#
+# method:
+#   <ats>:<slug>  — fetched via that ATS's public API. Verified: the job count
+#                   in the comment is what the API returned when it was added.
+#   auto          — no known ATS; fall back to the generic tiers (JSON-LD,
+#                   link extraction, browser render).
+#   pending       — not yet investigated. Never fetched, never reported broken.
+#
+# domain is only used to build the logo URL.
+
+companies:
+  # --- Verified ATS boards -------------------------------------------------
+  - {name: Databricks,  domain: databricks.com,  method: "greenhouse:databricks"}      # 898
+  - {name: Rubrik,      domain: rubrik.com,      method: "greenhouse:rubrik"}          # 145
+  - {name: Stripe,      domain: stripe.com,      method: "greenhouse:stripe"}          # 729
+  - {name: Anthropic,   domain: anthropic.com,   method: "greenhouse:anthropic"}       # 678
+  - {name: Figma,       domain: figma.com,       method: "greenhouse:figma"}           # 139
+  - {name: MongoDB,     domain: mongodb.com,     method: "greenhouse:mongodb"}         # 387
+  - {name: Datadog,     domain: datadoghq.com,   method: "greenhouse:datadog"}         # 438
+  - {name: Cloudflare,  domain: cloudflare.com,  method: "greenhouse:cloudflare"}      # 442
+  - {name: Airbnb,      domain: airbnb.com,      method: "greenhouse:airbnb"}          # 193
+  - {name: Dropbox,     domain: dropbox.com,     method: "greenhouse:dropbox"}         # 22
+  - {name: Coinbase,    domain: coinbase.com,    method: "greenhouse:coinbase"}        # 228
+  - {name: Twilio,      domain: twilio.com,      method: "greenhouse:twilio"}          # 130
+  - {name: Elastic,     domain: elastic.co,      method: "greenhouse:elastic"}         # 386
+  - {name: GitLab,      domain: gitlab.com,      method: "greenhouse:gitlab"}          # 232
+  - {name: InMobi,      domain: inmobi.com,      method: "greenhouse:inmobi"}          # 80
+  - {name: Groww,       domain: groww.in,        method: "greenhouse:groww"}           # 10
+
+  - {name: Notion,      domain: notion.so,       method: "ashby:notion"}               # 137
+  - {name: OpenAI,      domain: openai.com,      method: "ashby:openai"}               # 813
+  - {name: Snowflake,   domain: snowflake.com,   method: "ashby:snowflake"}            # 359
+  - {name: Miro,        domain: miro.com,        method: "ashby:miro"}                 # 21
+  - {name: Navi,        domain: navi.com,        method: "ashby:navi"}                 # 4
+
+  - {name: CRED,        domain: cred.club,       method: "lever:cred"}                 # 8
+  - {name: Meesho,      domain: meesho.com,      method: "lever:meesho"}               # 59
+
+  - {name: Swiggy,      domain: swiggy.com,      method: "smartrecruiters:swiggy"}     # 100+
+  - {name: Freshworks,  domain: freshworks.com,  method: "smartrecruiters:freshworks"} # 100+
+  - {name: Canva,       domain: canva.com,       method: "smartrecruiters:canva"}      # 100+
+
+  # --- Self-hosted boards with a usable public API -------------------------
+  # Amazon is scoped by ISO-3166 alpha-3 country code, not a tenant slug.
+  - {name: Amazon,      domain: amazon.com,      method: "amazon:IND"}                 # 288 (India)
+
+  # --- Known to need bespoke handling --------------------------------------
+  # Each of these has a careers site but no public ATS API we have found yet.
+  # Left as `pending` deliberately: better an honest gap than a fetcher that
+  # silently returns nothing and looks healthy.
+  - {name: Atlassian,   domain: atlassian.com,   method: pending}
+  - {name: Confluent,   domain: confluent.io,    method: pending}
+  - {name: HashiCorp,   domain: hashicorp.com,   method: pending}
+  - {name: Razorpay,    domain: razorpay.com,    method: pending}
+  - {name: Zerodha,     domain: zerodha.com,     method: pending}
+  - {name: Zomato,      domain: zomato.com,      method: pending}
+  - {name: Flipkart,    domain: flipkart.com,    method: pending}
+  - {name: PhonePe,     domain: phonepe.com,     method: pending}
+  - {name: Postman,     domain: postman.com,     method: pending}
+  - {name: Zoho,        domain: zoho.com,        method: pending}
+  - {name: Dream11,     domain: dream11.com,     method: pending}
+  - {name: Zepto,       domain: zepto.co.in,     method: pending}
+  - {name: Netflix,     domain: netflix.com,     method: pending}
+  - {name: Uber,        domain: uber.com,        method: pending}
