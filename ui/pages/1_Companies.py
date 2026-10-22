@@ -50,11 +50,14 @@ def _add(name: str, *, pending: bool = False) -> None:
     if db.get_company_by_name(name):
         st.warning(f"{name} is already tracked.")
         return
-    db.add_company(name)
+    # url passed explicitly: harmless now, and keeps the call valid if the
+    # UI is ever served from a newer checkout than src/ (Streamlit Cloud
+    # has shipped a half-updated tree at least once).
+    db.add_company(name, "")
     if pending:
         st.success(
-            f"Saved {name}. It won't be scanned until a fetch method is "
-            "added for it."
+            f"Saved {name} to the upcoming list. It won't be scanned until "
+            "a fetch method is added for it."
         )
     else:
         st.success(f"Added {name}.")
@@ -109,10 +112,12 @@ with st.expander("Add a company", expanded=not db.list_companies()):
         # could not resolve self-hosted boards like Amazon's at all.
         if not matches:
             st.caption(
-                f"\"{query}\" isn't in the known list yet. Save it and it will "
-                "be set up on the next review."
+                f"\"{query}\" isn't set up yet. Save it to the upcoming list "
+                "and it will be wired up on the next review."
             )
-            if st.button(f"Save \"{query}\" for later", key="save_pending"):
+            if st.button(
+                f"Save \"{query}\" to upcoming list", key="save_pending"
+            ):
                 _add(query, pending=True)
 
 companies = db.list_companies()

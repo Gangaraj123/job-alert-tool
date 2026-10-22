@@ -289,6 +289,29 @@ img.company-logo {
     * { transition: none !important; animation: none !important; }
 }
 </style>
+
+/* --- Streamlit Cloud chrome -------------------------------------------
+   The hosting toolbar (Fork / GitHub / Manage app) and the corner badge
+   belong to the platform, not to this app, and they sit on top of page
+   content. Hidden so the dashboard reads as its own thing. */
+[data-testid="stToolbar"],
+[data-testid="stToolbarActions"],
+[data-testid="stAppDeployButton"],
+[data-testid="stStatusWidget"],
+.stAppDeployButton,
+#MainMenu,
+header[data-testid="stHeader"] a[href*="github.com"],
+.viewerBadge_container__r5tak,
+.viewerBadge_link__qRIco,
+a[href*="streamlit.io/cloud"],
+footer {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* The header still reserves vertical space once emptied. */
+header[data-testid="stHeader"] { height: 0; background: transparent; }
+
 """
 
 
