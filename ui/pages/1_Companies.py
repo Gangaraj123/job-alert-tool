@@ -253,7 +253,20 @@ else:
             chips = [chip(status_text, status_kind)]
             if c.get("ats_type"):
                 chips.append(chip(c["ats_type"], "accent"))
-            chips.append(chip(f"{c.get('last_job_count') or 0} roles", "neutral"))
+            # Lead with what matched the user's filters. The board total is
+            # context, not the headline -- "898 roles" next to a company with
+            # one relevant opening is actively misleading.
+            method = c.get("method") or ""
+            if method == "pending":
+                chips.append(chip("needs setup", "warn"))
+            elif c.get("last_status") == "ok":
+                matched = c.get("last_match_count") or 0
+                scanned = c.get("last_job_count") or 0
+                chips.append(chip(
+                    f"{matched} matching" if matched else "no matches",
+                    "ok" if matched else "neutral",
+                ))
+                chips.append(chip(f"of {scanned} scanned", "neutral"))
 
             cols[2].markdown(
                 " ".join(chips)

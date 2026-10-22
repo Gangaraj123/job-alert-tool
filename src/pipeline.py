@@ -453,17 +453,27 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
     with _cf.ThreadPoolExecutor(max_workers=max_workers) as pool:
         results = list(pool.map(_fetch_one, companies))
 
+    # Filter per company rather than once over the pooled list, so each row
+    # can report how many of the board's postings actually matched. The board
+    # total alone read as "898 roles" when one of them was relevant.
+    filters_cfg = db.get_filters()
+    filtered: list[dict] = []
+
     for company, normalized, error in results:
         if error is not None:
             db.set_company_run_status(company["id"], "error", error=error)
             companies_broken += 1
             continue  # per-company error isolation: one bad fetcher never aborts the run
         collected.extend(normalized)
-        db.set_company_run_status(company["id"], "ok", job_count=len(normalized))
+        matches = filter_jobs(normalized, filters_cfg)
+        filtered.extend(matches)
+        db.set_company_run_status(
+            company["id"], "ok",
+            job_count=len(normalized), match_count=len(matches),
+        )
         closed_jobs_count += db.close_stale_jobs(company["id"], [j["id"] for j in normalized])
         companies_ok += 1
 
-    filtered = filter_jobs(collected, db.get_filters())
     new_jobs = [j for j in filtered if not db.job_exists(j["id"])]
     logger.info("%d jobs passed filters, %d are new", len(filtered), len(new_jobs))
 

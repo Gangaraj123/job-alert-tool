@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS companies (
     last_error TEXT,
     last_job_count INTEGER DEFAULT 0,
     logo_url TEXT,
+    last_match_count INTEGER DEFAULT 0,
     -- How to fetch this company, from companies.registry.yaml:
     -- "greenhouse:databricks", "amazon:IND", "auto", or "pending".
     method TEXT NOT NULL DEFAULT 'pending',
@@ -152,6 +153,10 @@ MIGRATIONS = [
     # auto-detection, so 'auto' preserves their behaviour exactly; only
     # newly added unknown names become 'pending'.
     "ALTER TABLE companies ADD COLUMN method TEXT NOT NULL DEFAULT 'auto'",
+    # How many of last_job_count actually matched the user's filters. Without
+    # it the UI could only show the board's total, which read as "898 roles
+    # for you" when the real answer was one.
+    "ALTER TABLE companies ADD COLUMN last_match_count INTEGER DEFAULT 0",
     # Must run after the ALTERs above add found_in_run_id, since on an
     # existing DB the column won't exist until that migration runs.
     "CREATE INDEX IF NOT EXISTS idx_jobs_run ON jobs(found_in_run_id)",
@@ -281,6 +286,7 @@ def set_company_run_status(
     status: str,
     error: str | None = None,
     job_count: int | None = None,
+    match_count: int | None = None,
     ats_type: str | None = None,
     ats_identifier: str | None = None,
 ) -> None:
@@ -292,6 +298,8 @@ def set_company_run_status(
     }
     if job_count is not None:
         fields["last_job_count"] = job_count
+    if match_count is not None:
+        fields["last_match_count"] = match_count
     if ats_type is not None:
         fields["ats_type"] = ats_type
         fields["ats_identifier"] = ats_identifier
