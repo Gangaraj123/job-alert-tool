@@ -26,6 +26,9 @@ class Settings:
     gmail_address: str | None
     gmail_app_password: str | None
     digest_to_email: str | None
+    # Public URL of the Streamlit dashboard. Linked at the foot of every
+    # digest so the mail is a notification, not the only copy of the data.
+    app_url: str | None
 
     gemini_api_key: str | None
 
@@ -47,6 +50,7 @@ def load_settings() -> Settings:
         gmail_address=_env("GMAIL_ADDRESS"),
         gmail_app_password=_env("GMAIL_APP_PASSWORD"),
         digest_to_email=_env("DIGEST_TO_EMAIL"),
+        app_url=_env("APP_URL"),
         gemini_api_key=_env("GEMINI_API_KEY"),
         google_vertex_credentials_json=_env("GOOGLE_VERTEX_CREDENTIALS_JSON"),
         vertex_project=_env("VERTEX_PROJECT"),

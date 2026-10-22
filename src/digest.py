@@ -16,31 +16,76 @@ from .config import load_settings
 logger = logging.getLogger("job_alert.digest")
 
 
-def build_digest_html(jobs: list[dict], broken_companies: list[dict]) -> str:
-    if not jobs and not broken_companies:
-        return ""
+def build_digest_html(
+    new_jobs: list[dict],
+    open_jobs: list[dict],
+    broken_companies: list[dict],
+) -> str:
+    """The digest goes out every day, so it always states the full picture:
+    what turned up since yesterday, and everything still open underneath.
+    A quiet day produces a short mail rather than no mail, which is the only
+    way silence in the inbox reliably means "nothing open" instead of
+    "the cron died three days ago"."""
+    new_ids = {j["id"] for j in new_jobs}
+    standing = [j for j in open_jobs if j["id"] not in new_ids]
 
+    if new_jobs:
+        headline = f"{len(new_jobs)} new job(s)"
+    elif standing:
+        headline = "No new jobs today"
+    else:
+        headline = "No open jobs"
+    parts = [f"<h2>Daily Job Digest — {headline}</h2>"]
+
+    if new_jobs:
+        parts.append("<h3>🆕 New since yesterday</h3>")
+        parts.append(_render_groups(new_jobs))
+
+    if standing:
+        parts.append(f"<h3>Still open ({len(standing)})</h3>")
+        parts.append(_render_groups(standing))
+
+    if not new_jobs and not standing:
+        parts.append(
+            "<p>Nothing matching your filters is open right now. "
+            "The scan ran fine — there is just nothing to show.</p>"
+        )
+
+    settings = load_settings()
+    if settings.app_url:
+        parts.append(
+            f'<p style="margin-top:20px">'
+            f'<a href="{settings.app_url}">Open the dashboard</a> — '
+            f'every job found so far, mark them done, edit your company list.'
+            f'</p>'
+        )
+
+    if broken_companies:
+        parts.append("<h3>⚠️ Broken fetchers</h3><ul>")
+        for c in broken_companies:
+            parts.append(
+                f"<li><b>{_escape(c['name'])}</b>: "
+                f"{_escape(c.get('last_error') or 'unknown error')}</li>"
+            )
+        parts.append("</ul>")
+
+    return "\n".join(parts)
+
+
+def _render_groups(jobs: list[dict]) -> str:
     by_company: dict[str, list[dict]] = defaultdict(list)
     for j in jobs:
         by_company[j["company_name"]].append(j)
 
-    parts = [f"<h2>Daily Job Digest — {len(jobs)} new job(s)</h2>"]
-
+    parts = []
     for company, company_jobs in sorted(by_company.items()):
-        parts.append(f"<h3>{_escape(company)} ({len(company_jobs)})</h3><ul>")
+        parts.append(f"<h4>{_escape(company)} ({len(company_jobs)})</h4><ul>")
         for j in company_jobs:
             location = f" — {_escape(j['location'])}" if j.get("location") else ""
             parts.append(
                 f'<li><a href="{j["url"]}">{_escape(j["title"])}</a>{location}</li>'
             )
         parts.append("</ul>")
-
-    if broken_companies:
-        parts.append("<h3>⚠️ Broken fetchers</h3><ul>")
-        for c in broken_companies:
-            parts.append(f"<li><b>{_escape(c['name'])}</b>: {_escape(c.get('last_error') or 'unknown error')}</li>")
-        parts.append("</ul>")
-
     return "\n".join(parts)
 
 
@@ -72,8 +117,16 @@ def _send(subject: str, html_body: str) -> bool:
         return False
 
 
-def send_email_digest(html_body: str, job_count: int) -> bool:
-    return _send(f"Job Alert Digest — {job_count} new job(s)", html_body)
+def send_email_digest(html_body: str, new_count: int, open_count: int) -> bool:
+    """Subject line leads with whatever matters most that day, so the
+    inbox is scannable without opening anything."""
+    if new_count:
+        subject = f"Job Alert — {new_count} new"
+    elif open_count:
+        subject = f"Job Alert — no new, {open_count} still open"
+    else:
+        subject = "Job Alert — nothing open"
+    return _send(subject, html_body)
 
 
 def send_ai_limit_alert(reason: str) -> bool:

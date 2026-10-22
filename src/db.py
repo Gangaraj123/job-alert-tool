@@ -553,3 +553,16 @@ def set_filters(filters: dict) -> None:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def get_open_jobs() -> list[dict]:
+    """Every job still worth looking at: not closed by the source and not
+    ticked off. Drives the daily digest, which goes out whether or not
+    anything new turned up, so an empty inbox always means "nothing open"
+    rather than "the cron might be broken"."""
+    client = get_client()
+    res = client.execute(
+        "SELECT * FROM jobs WHERE closed_at IS NULL AND done_at IS NULL "
+        "ORDER BY company_name, title"
+    )
+    return _rows_to_dicts(res)

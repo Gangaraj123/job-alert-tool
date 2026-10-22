@@ -464,21 +464,32 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
     db.record_run_jobs(run_id, [j["id"] for j in filtered])
 
     digest_jobs = db.get_unnotified_jobs()
+    open_jobs = db.get_open_jobs()
     broken_companies = [c for c in db.list_companies() if c.get("last_status") == "error"]
 
-    html = build_digest_html(digest_jobs, broken_companies)
+    # The digest is sent every run, not only when something is new. A day
+    # with no new postings still gets a short "no new, N still open" mail,
+    # so an empty inbox means "nothing matched" rather than "the cron broke
+    # and nobody noticed" — which is exactly what happened before.
+    html = build_digest_html(digest_jobs, open_jobs, broken_companies)
     email_sent = False
-    if html and not (dry_run or no_email):
-        email_sent = send_email_digest(html, len(digest_jobs))
+    if not (dry_run or no_email):
+        email_sent = send_email_digest(html, len(digest_jobs), len(open_jobs))
         if email_sent:
+            # Only the new ones get marked notified; the standing list is
+            # rebuilt from scratch each day and must not be consumed.
             db.mark_jobs_notified([j["id"] for j in digest_jobs])
-            logger.info("Digest emailed and %d job(s) marked notified", len(digest_jobs))
+            logger.info(
+                "Digest emailed — %d new, %d still open",
+                len(digest_jobs), len(open_jobs),
+            )
         else:
             logger.error("Digest send failed — jobs left unnotified for retry on next run")
-    elif html:
-        logger.info("Dry run / email disabled — %d job(s) would be in today's digest", len(digest_jobs))
     else:
-        logger.info("Nothing to notify about today.")
+        logger.info(
+            "Dry run / email disabled — digest would carry %d new, %d open",
+            len(digest_jobs), len(open_jobs),
+        )
 
     duration = _time.monotonic() - started
     db.finish_run(
