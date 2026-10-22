@@ -288,7 +288,6 @@ img.company-logo {
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
 }
-</style>
 
 /* --- Streamlit Cloud chrome -------------------------------------------
    The hosting toolbar (Fork / GitHub / Manage app) and the corner badge
@@ -311,6 +310,7 @@ footer {
 
 /* The header still reserves vertical space once emptied. */
 header[data-testid="stHeader"] { height: 0; background: transparent; }
+</style>
 
 """
 
