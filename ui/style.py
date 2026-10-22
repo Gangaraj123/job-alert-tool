@@ -308,6 +308,20 @@ footer {
   visibility: hidden !important;
 }
 
+/* Streamlit renames the badge's hashed classes between releases, so match
+   on the stable part of the name rather than a specific build's hash. */
+[class*="viewerBadge"],
+[data-testid*="ViewerBadge"],
+[data-testid="stAppViewerBadge"],
+[data-testid="stBottomBlockContainer"] > [data-testid="stDecoration"],
+[data-testid="stDecoration"],
+div[class*="_profileContainer"],
+div[class*="_container"][class*="viewer"],
+a[href*="share.streamlit.io"],
+a[href*="streamlit.io"][target="_blank"] {
+  display: none !important;
+}
+
 /* The header still reserves vertical space once emptied. */
 header[data-testid="stHeader"] { height: 0; background: transparent; }
 </style>
