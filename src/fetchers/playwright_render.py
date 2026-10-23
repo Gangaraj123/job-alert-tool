@@ -297,7 +297,10 @@ def _extract_jobs_from_links(links: list[tuple[str, str]], page_url: str) -> lis
 
 
 def _extract_via_ai(page_text: str, page_url: str, links: list[tuple[str, str]]) -> list[dict]:
-    from ..webutil import _call_gemini, _extract_text  # local import avoids a cycle at module load
+    # Local import avoids a cycle at module load. ai_daily_limit was missing
+    # here, so reaching this path raised NameError instead of degrading --
+    # invisible until a site defeated link extraction and fell through.
+    from ..webutil import _call_gemini, _extract_text, ai_daily_limit
 
     if not page_text.strip():
         return []
