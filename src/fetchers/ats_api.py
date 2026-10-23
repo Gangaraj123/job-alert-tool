@@ -138,6 +138,7 @@ def fetch(ats_type: str, identifier: str, **kwargs) -> list[dict]:
         "recruitee": fetch_recruitee,
         "amazon": fetch_amazon,
         "jibe": fetch_jibe,
+        "atlassian": fetch_atlassian,
     }.get(ats_type)
     if fn is None:
         raise FetchError(f"Unsupported ATS type: {ats_type}")
@@ -416,4 +417,33 @@ def fetch_jibe(host: str, **_) -> list[dict]:
         if len(jobs) >= int(data.get("totalCount") or 0):
             break
 
+    return jobs
+
+
+# Atlassian runs its applications through iCIMS but publishes its own plain
+# JSON listing, which includes qualifications text -- so the experience
+# filter works, unlike the rendered tiers that return titles only.
+_ATLASSIAN_LISTINGS = "https://www.atlassian.com/endpoint/careers/listings"
+
+
+def fetch_atlassian(_identifier: str = "", **_) -> list[dict]:
+    try:
+        data = http_get_json(_ATLASSIAN_LISTINGS, headers={"User-Agent": "Mozilla/5.0"})
+    except Exception as e:
+        raise FetchError(f"atlassian: {e}") from e
+
+    jobs = []
+    for j in data if isinstance(data, list) else []:
+        post = j.get("portalJobPost") or {}
+        # One posting can list several offices; join them so the location
+        # filter sees every option, including "Remote - India".
+        location = "; ".join(j.get("locations") or []) or None
+        jobs.append({
+            "title": j.get("title", ""),
+            "location": location,
+            "url": post.get("portalUrl") or j.get("applyUrl") or "",
+            "description": " ".join(filter(None, (
+                j.get("overview"), j.get("responsibilities"), j.get("qualifications"),
+            ))),
+        })
     return jobs

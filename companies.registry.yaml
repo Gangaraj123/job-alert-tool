@@ -60,9 +60,9 @@ companies:
   # Each of these has a careers site but no public ATS API we have found yet.
   # Left as `pending` deliberately: better an honest gap than a fetcher that
   # silently returns nothing and looks healthy.
-  # Renders, but the page exposes no job links or structured data the
-  # extractor can read.
-  - {name: Atlassian,   domain: atlassian.com,   method: pending}
+  # Applications go through iCIMS, but Atlassian publishes its own JSON
+  # listing with qualifications text included.
+  - {name: Atlassian,   domain: atlassian.com,   method: "atlassian:listings"}  # 357
   # Workday tenant cohesity.wd1 answers but rejects every site name tried;
   # their own careers page yields nothing renderable.
   - {name: Cohesity,    domain: cohesity.com,    method: pending}
