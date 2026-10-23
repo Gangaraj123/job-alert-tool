@@ -69,9 +69,54 @@ _WINDOWS = {
     "Last 30 days": 29,
 }
 
-companies = sorted(df["company_name"].dropna().unique().tolist())
-col1, col2, col3, col4 = st.columns([2, 1.3, 1, 1])
-company_filter = col1.multiselect("Company", companies)
+# Every tracked company, not only those with results: an empty count is
+# useful information ("Meta is tracked and has nothing"), and a company
+# vanishing from the filter the moment its roles close is disorienting.
+@st.cache_data(ttl=300)
+def _all_companies() -> list[str]:
+    return [c["name"] for c in db.list_companies()]
+
+
+counts = df["company_name"].value_counts()
+companies = sorted(set(_all_companies()) | set(df["company_name"].dropna()))
+
+_selected = st.session_state.setdefault("job_company_filter", [])
+company_filter = [c for c in _selected if c in companies]
+
+label = f"Filter by company ({len(company_filter)} selected)" if company_filter \
+    else "Filter by company"
+with st.expander(label, expanded=False):
+    if company_filter and st.button("Clear selection", use_container_width=True):
+        st.session_state["job_company_filter"] = []
+        st.rerun()
+
+    per_row = 3
+    for start_i in range(0, len(companies), per_row):
+        row = st.columns(per_row)
+        for slot, name in zip(row, companies[start_i:start_i + per_row]):
+            active = name in company_filter
+            n = int(counts.get(name, 0))
+            slot.markdown(
+                '<div class="company-pick">'
+                + logo_img(_company_logos.get(name, ""), size=22)
+                + f'<span class="name">{name}</span></div>',
+                unsafe_allow_html=True,
+            )
+            if slot.button(
+                f"{n} role{'' if n == 1 else 's'}",
+                key=f"cf_{name}",
+                type="primary" if active else "secondary",
+                use_container_width=True,
+                disabled=n == 0,
+                help=None if n else "No roles found for this company yet",
+            ):
+                if active:
+                    _selected.remove(name)
+                else:
+                    _selected.append(name)
+                st.rerun()
+
+col2, col3, col4 = st.columns([1.3, 1, 1])
 found_window = col2.selectbox(
     "Found", list(_WINDOWS), index=0,
     help="When the role first showed up in a scan, not when it was posted.",

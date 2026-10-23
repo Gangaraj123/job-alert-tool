@@ -250,6 +250,22 @@ img.company-logo {
 }
 .row-ident .row-sub { word-break: break-all; }
 
+/* Company picker tiles: names vary from "Deel" to "Blink Health", so let
+   them wrap onto a second line and reserve the height either way, keeping
+   the grid's buttons aligned instead of stepped. */
+.company-pick {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2.4rem;
+    line-height: 1.15;
+}
+.company-pick .name {
+    font-size: 0.82rem;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
 .row-title {
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
