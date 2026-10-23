@@ -137,6 +137,7 @@ def fetch(ats_type: str, identifier: str, **kwargs) -> list[dict]:
         "workday": fetch_workday,
         "recruitee": fetch_recruitee,
         "amazon": fetch_amazon,
+        "jibe": fetch_jibe,
     }.get(ats_type)
     if fn is None:
         raise FetchError(f"Unsupported ATS type: {ats_type}")
@@ -357,5 +358,62 @@ def fetch_amazon(identifier: str = "IND", **_) -> list[dict]:
         if len(batch) < _AMAZON_PAGE or len(jobs) >= int(data.get("hits") or 0):
             break
         offset += _AMAZON_PAGE
+
+    return jobs
+
+
+# Jibe (now iCIMS Talent Cloud) powers a lot of large-enterprise career
+# sites at careers.<company>.com. The pages are JS-rendered and expose no
+# JobPosting markup on the listing, so the generic tiers see nothing — but
+# the site's own /api/jobs endpoint returns everything, descriptions
+# included. The identifier is the careers host.
+_JIBE_PAGE = 100
+_JIBE_MAX_PAGES = 20
+
+
+def fetch_jibe(host: str, **_) -> list[dict]:
+    """`host` is the careers hostname, e.g. "careers.docusign.com"."""
+    host = host.strip().rstrip("/")
+    if "://" in host:
+        from urllib.parse import urlparse
+        host = urlparse(host).netloc
+
+    jobs: list[dict] = []
+    for page in range(1, _JIBE_MAX_PAGES + 1):
+        try:
+            data = http_get_json(
+                f"https://{host}/api/jobs",
+                params={"page": page, "limit": _JIBE_PAGE},
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            )
+        except Exception as e:
+            if jobs:
+                logger.warning("jibe(%s): stopped at page %d: %s", host, page, e)
+                break
+            raise FetchError(f"jibe: {e}") from e
+
+        batch = data.get("jobs") or []
+        if not batch:
+            break
+
+        for entry in batch:
+            d = entry.get("data") or entry
+            meta = d.get("meta_data") if isinstance(d.get("meta_data"), dict) else {}
+            location = d.get("full_location") or ", ".join(
+                part for part in (d.get("city"), d.get("country")) if part
+            )
+            jobs.append({
+                "title": d.get("title", ""),
+                "location": location or None,
+                # canonical_url is the human-facing posting; apply_url jumps
+                # straight into the ATS login, which is not what to link to.
+                "url": meta.get("canonical_url") or d.get("apply_url") or "",
+                "description": " ".join(filter(None, (
+                    d.get("description"), d.get("qualifications"),
+                ))),
+            })
+
+        if len(jobs) >= int(data.get("totalCount") or 0):
+            break
 
     return jobs

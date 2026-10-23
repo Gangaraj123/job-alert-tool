@@ -90,22 +90,26 @@ with st.expander(label, expanded=False):
         st.session_state["job_company_filter"] = []
         st.rerun()
 
-    query = st.text_input(
-        "Search companies", key="company_search", placeholder="Type to narrow…",
+    # Streamlit's text_input only commits on Enter or blur, so it cannot
+    # filter as you type. multiselect's built-in type-ahead does, so search
+    # lives there and the tiles below stay for browsing by logo. Both write
+    # the same session_state key, so they never disagree.
+    picked = st.multiselect(
+        "Search companies",
+        options=sorted(companies, key=lambda c: (-int(counts.get(c, 0)), c.lower())),
+        default=company_filter,
+        format_func=lambda c: f"{c} ({int(counts.get(c, 0))})",
+        placeholder="Type to search companies…",
         label_visibility="collapsed",
-    ).strip().lower()
+        key="company_multiselect",
+    )
+    if picked != company_filter:
+        st.session_state["job_company_filter"] = list(picked)
+        st.rerun()
 
     # Companies with results first: scrolling past a screen of "0 roles" to
     # reach the handful that matched is the wrong default with 28 tracked.
-    # Selected ones stay visible regardless of the search text.
-    visible = [
-        c for c in companies
-        if (not query or query in c.lower()) or c in company_filter
-    ]
-    visible.sort(key=lambda c: (-int(counts.get(c, 0)), c.lower()))
-
-    if not visible:
-        st.caption(f"No tracked company matches \"{query}\".")
+    visible = sorted(companies, key=lambda c: (-int(counts.get(c, 0)), c.lower()))
 
     per_row = 3
     for start_i in range(0, len(visible), per_row):

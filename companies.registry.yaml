@@ -88,9 +88,9 @@ companies:
   - {name: Dream11,     domain: dream11.com,     method: pending}
   - {name: Zepto,       domain: zepto.co.in,     method: pending}
   - {name: Netflix,     domain: netflix.com,     method: pending}
-  # DocuSign runs iCIMS/Jibe behind careers.docusign.com — no public JSON API
-  # found, and the listing page did not render job links either.
-  - {name: DocuSign,    domain: docusign.com,    method: pending}
+  # Jibe/iCIMS site: the listing page carries no JobPosting markup, but the
+  # platform's own /api/jobs endpoint returns all 254 with descriptions.
+  - {name: DocuSign,    domain: docusign.com,    method: "jibe:careers.docusign.com"}  # 254
   # Microsoft retired its public search API (gcsservices.careers.microsoft.com
   # now serves an Azure CDN cert for a different host). The SPA renders, so
   # the browser tier handles it.
