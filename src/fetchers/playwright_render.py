@@ -21,6 +21,8 @@ failed, and costs against the shared daily AI call budget.
 """
 from __future__ import annotations
 
+import asyncio as _asyncio
+import os as _os
 import concurrent.futures as _cf
 import json
 import logging
@@ -37,7 +39,10 @@ logger = logging.getLogger("job_alert.fetchers.playwright_render")
 
 MAX_PAGE_TEXT_CHARS = 28000
 MAX_PAGINATION_ROUNDS = 8
-MAX_DETAIL_PAGES = 15
+# Raised from 15 now that the loads actually run concurrently: the old
+# thread-pool version failed every page, so the cap was never the binding
+# constraint on time.
+MAX_DETAIL_PAGES = 40
 DETAIL_CONCURRENCY = 5
 
 EXTRACTION_PROMPT = """The following is the visible text of a company careers/jobs page,
@@ -191,46 +196,63 @@ def _render(url: str) -> tuple[str, str, list[tuple[str, str]]]:
 
 
 def _fetch_detail_descriptions(urls: list[str], page_url: str) -> dict[str, str]:
-    """Opens each job's own detail page (bounded by MAX_DETAIL_PAGES) in one
-    shared browser session and grabs its visible text as the full
-    description — the AI extraction pass only sees the listing page, which
-    rarely includes full descriptions. Reuses one browser across all of them
-    rather than relaunching per job. A failing detail page is skipped, never
-    fatal to the whole fetch."""
+    """Opens each job's own detail page for its full description.
+
+    Listing pages carry a title and location but rarely the requirements, so
+    without this the experience filter has nothing to read and falls open --
+    every rendered company's roles appeared regardless of seniority.
+
+    Uses the ASYNC Playwright API. The sync API binds its greenlet to the
+    creating thread, so loading pages across a thread pool failed every
+    single time with "Cannot switch to a different thread" -- silently, since
+    each failure is caught per page. Async concurrency stays on one thread
+    and actually works.
+    """
     distinct = [u for u in dict.fromkeys(urls) if u and u != page_url][:MAX_DETAIL_PAGES]
     if not distinct:
         return {}
 
+    try:
+        return _asyncio.run(_load_details_async(distinct))
+    except Exception as e:
+        # Descriptions are an enrichment: losing them costs filter accuracy,
+        # never the jobs themselves.
+        logger.warning("detail page fetch failed entirely: %s", e)
+        return {}
+
+
+async def _load_details_async(urls: list[str]) -> dict[str, str]:
+    from playwright.async_api import async_playwright
+
     out: dict[str, str] = {}
-    with sync_playwright() as p:
-        browser = _launch_chromium(p)
+    async with async_playwright() as p:
+        executable = _os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+        browser = await (
+            p.chromium.launch(headless=True, executable_path=executable)
+            if executable else p.chromium.launch(headless=True)
+        )
         try:
-            # Several pages open in parallel tabs in the one browser —
-            # loading 15 detail pages one after another was adding ~15x a
-            # single page load to every fetch, and they're independent.
-            contexts = [browser.new_page() for _ in range(min(DETAIL_CONCURRENCY, len(distinct)))]
+            sem = _asyncio.Semaphore(DETAIL_CONCURRENCY)
 
-            def _load(args):
-                page, url = args
-                try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=8000)
-                    page.wait_for_timeout(600)
-                    return url, page.inner_text("body")[:4000]
-                except Exception as e:
-                    logger.debug("detail page fetch failed for %s: %s", url, e)
-                    return url, None
-
-            # Round-robin URLs across the open tabs; each tab is used by at
-            # most one thread at a time (Playwright pages aren't reentrant).
-            for batch_start in range(0, len(distinct), len(contexts)):
-                batch = distinct[batch_start:batch_start + len(contexts)]
-                with _cf.ThreadPoolExecutor(max_workers=len(batch)) as pool:
-                    for url, text in pool.map(_load, zip(contexts, batch)):
+            async def load(url: str) -> None:
+                async with sem:
+                    page = await browser.new_page()
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(600)
+                        text = await page.inner_text("body")
                         if text:
-                            out[url] = text
+                            out[url] = text[:8000]
+                    except Exception as e:
+                        logger.debug("detail page fetch failed for %s: %s", url, e)
+                    finally:
+                        await page.close()
+
+            await _asyncio.gather(*(load(u) for u in urls))
         finally:
-            browser.close()
+            await browser.close()
     return out
+
 
 
 # A link pointing at an individual posting: ".../jobs/<something>", not a

@@ -69,8 +69,10 @@ companies:
   # No public ATS API, but their listing page renders and yields job links.
   - {name: Confluent,   domain: confluent.io,    method: auto,
      careers_url: "https://careers.confluent.io/jobs"}
-  - {name: Glean,       domain: glean.com,       method: auto,
-     careers_url: "https://www.glean.com/careers"}                             # 129
+  # Their careers page is a Greenhouse board under the slug "gleanwork";
+  # the API gives the same 129 roles WITH descriptions, which rendering
+  # does not. (A stray SmartRecruiters tenant holds one posting -- ignore.)
+  - {name: Glean,       domain: glean.com,       method: "greenhouse:gleanwork"}  # 129
   - {name: Rippling,    domain: rippling.com,    method: auto,
      careers_url: "https://www.rippling.com/careers/open-roles"}               # 33
   - {name: Automattic,  domain: automattic.com,  method: auto,
