@@ -387,3 +387,69 @@ def fetch(career_page_url: str, **_) -> list[dict]:
         len(jobs), tier_used, len(descriptions),
     )
     return jobs
+
+
+# Meta's careers site renders job cards as unlinked divs with obfuscated
+# class names, so there is nothing for the link extractor to find and no
+# per-job URL to apply to or dedupe on. The page's own GraphQL response
+# does carry ids, titles and locations, so we load the page as a browser
+# does and read the payload it receives -- no extra endpoint is called and
+# no crawler identity is impersonated.
+META_JOBS_URL = "https://www.metacareers.com/jobs?q=software%20engineer"
+
+
+def fetch_meta(query_url: str = META_JOBS_URL, **_) -> list[dict]:
+    import json
+
+    payload: dict[str, str] = {}
+
+    def capture(response) -> None:
+        if "graphql" not in response.url or response.status != 200:
+            return
+        try:
+            body = response.text()
+        except Exception:
+            return
+        # Several GraphQL calls land per page; only one holds the listing.
+        if '"all_jobs"' in body:
+            payload["body"] = body
+
+    with sync_playwright() as p:
+        browser = _launch_chromium(p)
+        try:
+            page = browser.new_page(
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            )
+            page.on("response", capture)
+            page.goto(query_url, wait_until="networkidle", timeout=60000)
+            page.wait_for_timeout(8000)
+        finally:
+            browser.close()
+
+    if "body" not in payload:
+        raise FetchError("meta: no job listing payload seen in page responses")
+
+    try:
+        data = json.loads(payload["body"])["data"]["job_search_with_featured_jobs_v2"]
+    except Exception as e:
+        raise FetchError(f"meta: unexpected payload shape: {e}") from e
+
+    jobs = []
+    for j in data.get("all_jobs") or []:
+        job_id = j.get("id")
+        if not job_id:
+            continue
+        jobs.append({
+            "title": j.get("title", ""),
+            # One posting can be open in several offices; join them so the
+            # location filter sees each option.
+            "location": "; ".join(j.get("locations") or []) or None,
+            "url": f"https://www.metacareers.com/jobs/{job_id}/",
+            # The listing carries no description; the experience filter
+            # falls open for these, which is its documented behaviour.
+            "description": "",
+        })
+    return jobs

@@ -139,6 +139,7 @@ def fetch(ats_type: str, identifier: str, **kwargs) -> list[dict]:
         "amazon": fetch_amazon,
         "jibe": fetch_jibe,
         "atlassian": fetch_atlassian,
+        "meta": _fetch_meta,
     }.get(ats_type)
     if fn is None:
         raise FetchError(f"Unsupported ATS type: {ats_type}")
@@ -424,6 +425,12 @@ def fetch_jibe(host: str, **_) -> list[dict]:
 # JSON listing, which includes qualifications text -- so the experience
 # filter works, unlike the rendered tiers that return titles only.
 _ATLASSIAN_LISTINGS = "https://www.atlassian.com/endpoint/careers/listings"
+
+
+def _fetch_meta(identifier: str = "", **kw) -> list[dict]:
+    """Thin shim so "meta:<url>" routes like any other ATS type."""
+    from .playwright_render import META_JOBS_URL, fetch_meta
+    return fetch_meta(identifier or META_JOBS_URL)
 
 
 def fetch_atlassian(_identifier: str = "", **_) -> list[dict]:

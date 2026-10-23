@@ -107,7 +107,11 @@ companies:
   # board is elsewhere.
   - {name: Wayfair,     domain: wayfair.com,     method: pending}
   - {name: Broadcom,    domain: broadcom.com,    method: pending}
-  - {name: Meta,        domain: meta.com,        method: pending}
+  # Job cards are unlinked divs with obfuscated classes, so nothing to
+  # extract from the DOM -- but the page's own GraphQL response carries
+  # ids, titles and locations. No descriptions, so the experience filter
+  # falls open for these.
+  - {name: Meta,        domain: meta.com,        method: "meta:"}             # 412
   - {name: Deel,        domain: deel.com,        method: pending}
   - {name: Apple,       domain: apple.com,       method: pending}
   - {name: Indeed,      domain: indeed.com,      method: pending}
