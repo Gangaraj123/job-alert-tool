@@ -90,10 +90,27 @@ with st.expander(label, expanded=False):
         st.session_state["job_company_filter"] = []
         st.rerun()
 
+    query = st.text_input(
+        "Search companies", key="company_search", placeholder="Type to narrow…",
+        label_visibility="collapsed",
+    ).strip().lower()
+
+    # Companies with results first: scrolling past a screen of "0 roles" to
+    # reach the handful that matched is the wrong default with 28 tracked.
+    # Selected ones stay visible regardless of the search text.
+    visible = [
+        c for c in companies
+        if (not query or query in c.lower()) or c in company_filter
+    ]
+    visible.sort(key=lambda c: (-int(counts.get(c, 0)), c.lower()))
+
+    if not visible:
+        st.caption(f"No tracked company matches \"{query}\".")
+
     per_row = 3
-    for start_i in range(0, len(companies), per_row):
+    for start_i in range(0, len(visible), per_row):
         row = st.columns(per_row)
-        for slot, name in zip(row, companies[start_i:start_i + per_row]):
+        for slot, name in zip(row, visible[start_i:start_i + per_row]):
             active = name in company_filter
             n = int(counts.get(name, 0))
             slot.markdown(
