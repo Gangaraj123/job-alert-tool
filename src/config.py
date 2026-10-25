@@ -29,6 +29,11 @@ class Settings:
     # Public URL of the Streamlit dashboard. Linked at the foot of every
     # digest so the mail is a notification, not the only copy of the data.
     app_url: str | None
+    # Dead-man's-switch URL pinged after every successful run. An external
+    # watchdog alerts when the ping STOPS -- the only way to detect a run
+    # that never happened, since nothing inside the system is executing to
+    # notice. Unset means no ping and no behaviour change.
+    healthcheck_url: str | None
 
     gemini_api_key: str | None
 
@@ -51,6 +56,7 @@ def load_settings() -> Settings:
         gmail_app_password=_env("GMAIL_APP_PASSWORD"),
         digest_to_email=_env("DIGEST_TO_EMAIL"),
         app_url=_env("APP_URL"),
+        healthcheck_url=_env("HEALTHCHECK_URL"),
         gemini_api_key=_env("GEMINI_API_KEY"),
         google_vertex_credentials_json=_env("GOOGLE_VERTEX_CREDENTIALS_JSON"),
         vertex_project=_env("VERTEX_PROJECT"),

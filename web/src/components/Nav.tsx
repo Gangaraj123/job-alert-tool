@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Briefcase, Building2, SlidersHorizontal } from "lucide-react";
+import { Activity, Briefcase, Building2, SlidersHorizontal } from "lucide-react";
 import clsx from "clsx";
 
 /**
@@ -14,6 +14,7 @@ const LINKS = [
   { href: "/", label: "Jobs", icon: Briefcase },
   { href: "/companies", label: "Companies", icon: Building2 },
   { href: "/filters", label: "Filters", icon: SlidersHorizontal },
+  { href: "/activity", label: "Activity", icon: Activity },
 ];
 
 export function Nav() {

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from . import db, registry
-from .config import load_config
+from .config import load_config, load_settings
 from .detector import detect_ats
 from .digest import build_digest_html, send_email_digest
 from .filters import filter_jobs
@@ -401,6 +401,32 @@ def run_test_company(name: str) -> None:
     print()
 
 
+def _ping_healthcheck(broken: int, total: int) -> None:
+    """Tell the watchdog this run finished.
+
+    Pinged last, so it only fires for a run that actually completed. The
+    watchdog's job is to notice the ABSENCE of this call: a disabled
+    workflow, a skipped schedule, or a crashed runner all look identical
+    from inside this process -- nothing is running to report them.
+
+    Never raises: a watchdog being unreachable must not fail a run that
+    otherwise succeeded.
+    """
+    url = load_settings().healthcheck_url
+    if not url:
+        return
+    try:
+        import requests
+        requests.post(
+            url,
+            data=f"{total - broken}/{total} companies ok",
+            timeout=10,
+        )
+        logger.info("Pinged healthcheck")
+    except Exception as e:
+        logger.warning("Healthcheck ping failed (run itself was fine): %s", e)
+
+
 def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: str = "cron") -> dict:
     """Runs one full pass. Returns a stats dict (also persisted as a row in
     the `runs` table) so the UI can show run history and per-run results."""
@@ -548,6 +574,8 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
         run_id, duration, len(companies), companies_ok, companies_broken,
         len(new_jobs_to_store), closed_jobs_count,
     )
+
+    _ping_healthcheck(companies_broken, len(companies))
 
     return {
         "run_id": run_id,
