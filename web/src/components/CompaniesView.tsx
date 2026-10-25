@@ -7,6 +7,8 @@ import type { Company } from "@/lib/db";
 import { addCompanyByName, deleteCompany, toggleCompany } from "@/app/actions";
 import { Button, Card, Chip, Logo } from "@/components/ui/primitives";
 import { Combobox, type ComboItem } from "@/components/Combobox";
+import { Toast } from "@/components/Toast";
+import { useRouter } from "next/navigation";
 
 export type RegistryItem = {
   name: string;
@@ -23,7 +25,11 @@ export function CompaniesView({
   registry: RegistryItem[];
 }) {
   const [notice, setNotice] = React.useState<string | null>(null);
+  // Name of the company just added, so its row can be scrolled to and
+  // highlighted once the refreshed server data includes it.
+  const [justAdded, setJustAdded] = React.useState<string | null>(null);
   const [busy, startTransition] = React.useTransition();
+  const router = useRouter();
   const tracked = React.useMemo(
     () => new Set(companies.map((c) => c.name)),
     [companies],
@@ -43,8 +49,30 @@ export function CompaniesView({
     startTransition(async () => {
       const res = await addCompanyByName(name);
       setNotice(res.message);
+      if (res.ok) {
+        setJustAdded(res.name ?? name);
+        // revalidatePath alone did not refresh the already-mounted client
+        // component, so the counts and the new row stayed stale.
+        router.refresh();
+      }
     });
   }
+
+  // Scroll to the new row once it exists in the refreshed data -- the list
+  // it belongs to can sit well below the fold.
+  const scrollToAdded = React.useCallback((name: string) => {
+    const el = document.getElementById(`company-${name}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-accent");
+    setTimeout(() => el.classList.remove("ring-2", "ring-accent"), 2200);
+  }, []);
+
+  React.useEffect(() => {
+    if (justAdded && companies.some((c) => c.name === justAdded)) {
+      scrollToAdded(justAdded);
+    }
+  }, [companies, justAdded, scrollToAdded]);
 
   const live = companies.filter((c) => c.method !== "pending");
   const upcoming = companies.filter((c) => c.method === "pending");
@@ -72,12 +100,20 @@ export function CompaniesView({
             ) : null
           }
         />
-        {notice ? (
-          <p className="text-xs text-muted" role="status">
-            {notice}
-          </p>
-        ) : null}
+
       </Card>
+
+      {notice ? (
+        <Toast
+          message={notice}
+          action={
+            justAdded && companies.some((c) => c.name === justAdded)
+              ? { label: "Show me", onClick: () => scrollToAdded(justAdded) }
+              : undefined
+          }
+          onDismiss={() => setNotice(null)}
+        />
+      ) : null}
 
       <Section title="Fetching" count={live.length}>
         {live.map((c) => (
@@ -139,7 +175,10 @@ function CompanyRow({
 
   return (
     <li>
-      <Card className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3">
+      <Card
+        id={`company-${c.name}`}
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3 transition-shadow"
+      >
         <Logo src={c.logo_url} name={c.name} size={28} />
 
         <div className="min-w-0 flex-1">

@@ -33,7 +33,7 @@ export async function deleteCompany(id: number) {
  */
 export async function addCompanyByName(name: string) {
   const trimmed = name.trim();
-  if (!trimmed) return { ok: false, message: "Enter a company name." };
+  if (!trimmed) return { ok: false, name: null, message: "Enter a company name." };
 
   const entry = lookupRegistry(trimmed);
   const canonical = entry?.name ?? trimmed;
@@ -47,6 +47,9 @@ export async function addCompanyByName(name: string) {
 
   return {
     ok: true,
+    // The canonical name, so the caller can locate the row it just created:
+    // the registry decides spelling, e.g. "amazon" is stored as "Amazon".
+    name: canonical,
     message: entry
       ? `Added ${canonical}.`
       : `Saved ${canonical} to the upcoming list — it won't be scanned until a fetch method is added.`,
