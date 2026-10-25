@@ -17,6 +17,15 @@ export function db(): Client {
   return client;
 }
 
+/**
+ * libSQL returns Row objects with non-enumerable helpers attached, which
+ * React refuses to pass from a Server Component to a Client Component
+ * ("Only plain objects can be passed"). Copy each row into a plain object.
+ */
+function plain<T>(rows: unknown[]): T[] {
+  return rows.map((r) => ({ ...(r as Record<string, unknown>) })) as T[];
+}
+
 export type Company = {
   id: number;
   name: string;
@@ -44,6 +53,11 @@ export type Job = {
   notified_at: string | null;
   closed_at: string | null;
   done_at: string | null;
+  /** When the company published the role, where the source reports it. */
+  posted_at: string | null;
+  /** Dismissed by the user -- distinct from closed_at, which means the
+   *  company removed the listing. */
+  dismissed_at: string | null;
 };
 
 export type Filters = {
@@ -66,17 +80,18 @@ const DEFAULT_FILTERS: Filters = {
 
 export async function listCompanies(): Promise<Company[]> {
   const res = await db().execute("SELECT * FROM companies ORDER BY name");
-  return res.rows as unknown as Company[];
+  return plain<Company>(res.rows);
 }
 
 /** Open jobs: still listed by the company and not ticked off. */
 export async function listJobs(): Promise<Job[]> {
   const res = await db().execute(
     `SELECT id, company_id, company_name, title, location, url, description,
-            first_seen_at, notified_at, closed_at, done_at
+            first_seen_at, notified_at, closed_at, done_at,
+            posted_at, dismissed_at
      FROM jobs ORDER BY first_seen_at DESC LIMIT 1000`,
   );
-  return res.rows as unknown as Job[];
+  return plain<Job>(res.rows);
 }
 
 export async function getFilters(): Promise<Filters> {
@@ -147,5 +162,5 @@ export async function listRuns(limit = 10): Promise<Run[]> {
           FROM runs ORDER BY id DESC LIMIT ?`,
     args: [limit],
   });
-  return res.rows as unknown as Run[];
+  return plain<Run>(res.rows);
 }
