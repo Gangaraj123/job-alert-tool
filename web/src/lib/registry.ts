@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { parse } from "yaml";
+import generated from "@/generated/registry.json";
 
 /**
  * The same companies.registry.yaml the Python pipeline reads, so the two
@@ -17,21 +15,10 @@ export type RegistryEntry = {
 let cache: RegistryEntry[] | null = null;
 
 export function registryEntries(): RegistryEntry[] {
-  if (cache) return cache;
-  try {
-    // The web app lives one level below the repo root.
-    const path = join(process.cwd(), "..", "companies.registry.yaml");
-    const raw = parse(readFileSync(path, "utf8")) as {
-      companies?: RegistryEntry[];
-    };
-    cache = (raw?.companies ?? [])
-      .filter((e) => e?.name)
+  if (!cache) {
+    cache = (generated as RegistryEntry[])
       .map((e) => ({ ...e, method: e.method ?? "pending" }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  } catch {
-    // A missing or malformed registry must not take the page down; every
-    // company simply reads as unknown until it is fixed.
-    cache = [];
   }
   return cache;
 }

@@ -12,3 +12,4 @@ ui/.streamlit/secrets.toml
 web/.env.local
 web/node_modules
 web/.next
+web/src/generated
