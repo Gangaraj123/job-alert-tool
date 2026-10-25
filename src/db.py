@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
-    company_id INTEGER NOT NULL,
+    -- Nullable so a job outlives its company being removed. company_name
+    -- below is the historical label that keeps the row readable afterwards.
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
     company_name TEXT NOT NULL,
     title TEXT NOT NULL,
     location TEXT,
@@ -54,13 +56,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     fetch_tier TEXT,
     first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
     notified_at TEXT,
-    found_in_run_id INTEGER,
+    found_in_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
     closed_at TEXT,
-    done_at TEXT
+    done_at TEXT,
+    posted_at TEXT,
+    dismissed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_notified ON jobs(notified_at);
+-- The open-jobs query filters on all three state columns together.
+CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(closed_at, done_at, dismissed_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_posted ON jobs(posted_at);
 
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,10 +86,15 @@ CREATE TABLE IF NOT EXISTS runs (
 -- previous run — lets run history show "everything this run found" while
 -- the `jobs` table itself stays deduplicated (one row per unique job).
 CREATE TABLE IF NOT EXISTS run_jobs (
-    run_id INTEGER NOT NULL,
-    job_id TEXT NOT NULL,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     PRIMARY KEY (run_id, job_id)
 );
+
+-- Declared after the table it indexes. Statements run in order, so an index
+-- placed with the jobs indexes above would reference a table that does not
+-- exist yet on a fresh database.
+CREATE INDEX IF NOT EXISTS idx_run_jobs_job ON run_jobs(job_id);
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -160,6 +172,14 @@ MIGRATIONS = [
     # it the UI could only show the board's total, which read as "898 roles
     # for you" when the real answer was one.
     "ALTER TABLE companies ADD COLUMN last_match_count INTEGER DEFAULT 0",
+    # When the company published the role, as opposed to first_seen_at, which
+    # is only when WE first noticed it. A role posted three weeks before the
+    # company was added would otherwise look brand new.
+    "ALTER TABLE jobs ADD COLUMN posted_at TEXT",
+    # Dismissed by the user. Distinct from closed_at, which means the company
+    # removed the listing: one is "I'm not interested", the other is "it's
+    # gone". Both keep the row so it stays browsable.
+    "ALTER TABLE jobs ADD COLUMN dismissed_at TEXT",
     # Must run after the ALTERs above add found_in_run_id, since on an
     # existing DB the column won't exist until that migration runs.
     "CREATE INDEX IF NOT EXISTS idx_jobs_run ON jobs(found_in_run_id)",
@@ -167,6 +187,18 @@ MIGRATIONS = [
 
 
 _schema_ready = False
+
+
+def _split_statements(sql: str) -> list[str]:
+    """Split a SQL script into statements, ignoring semicolons inside
+    comments. Splitting on a bare ";" cuts a CREATE TABLE in half the moment
+    someone writes a comment containing one -- which produces a confusing
+    "KeyError: 'result'" from the driver rather than a syntax error."""
+    lines = [
+        line for line in sql.splitlines()
+        if not line.strip().startswith("--")
+    ]
+    return [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
 
 
 def init_schema() -> None:
@@ -178,7 +210,7 @@ def init_schema() -> None:
     if _schema_ready:
         return
     client = get_client()
-    for statement in [s.strip() for s in SCHEMA.split(";") if s.strip()]:
+    for statement in _split_statements(SCHEMA):
         client.execute(statement)
     for statement in MIGRATIONS:
         try:
@@ -326,7 +358,8 @@ def insert_job(job: dict, run_id: int | None = None) -> None:
     client = get_client()
     client.execute(
         "INSERT INTO jobs (id, company_id, company_name, title, location, url, "
-        "description, fetch_tier, found_in_run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "description, fetch_tier, posted_at, found_in_run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO NOTHING",
         [
             job["id"],
@@ -337,9 +370,32 @@ def insert_job(job: dict, run_id: int | None = None) -> None:
             job["url"],
             job.get("description"),
             job.get("fetch_tier"),
+            job.get("posted_at"),
             run_id,
         ],
     )
+
+
+def backfill_posted_dates(jobs: list[dict]) -> int:
+    """Fill posted_at on rows stored before the source date was captured.
+
+    insert_job skips rows that already exist, so a job first seen before
+    this column existed would never get a date. Only writes where the
+    column is still empty, so a stored date is never overwritten by a
+    later, less accurate one.
+    """
+    pairs = [(j["id"], j.get("posted_at")) for j in jobs if j.get("posted_at")]
+    if not pairs:
+        return 0
+    client = get_client()
+    updated = 0
+    for job_id, posted in pairs:
+        res = client.execute(
+            "UPDATE jobs SET posted_at = ? WHERE id = ? AND posted_at IS NULL",
+            [posted, job_id],
+        )
+        updated += res.rows_affected or 0
+    return updated
 
 
 def close_stale_jobs(company_id: int, current_job_ids: list[str]) -> int:
@@ -416,14 +472,14 @@ def count_jobs() -> int:
 
 _JOB_LIST_COLUMNS = (
     "id, company_id, company_name, title, location, url, description, "
-    "fetch_tier, first_seen_at, notified_at, found_in_run_id, closed_at, done_at"
+    "fetch_tier, first_seen_at, notified_at, found_in_run_id, closed_at, done_at, "
+    "posted_at, dismissed_at"
 )
 
 
 def list_recent_jobs(limit: int = 300) -> list[dict]:
-    # Explicit column list (not SELECT *) to skip legacy unused columns
-    # (fit_score etc., kept in the schema for backward compatibility) and
-    # keep the payload over the network smaller.
+    # Explicit column list rather than SELECT *, to keep the payload over
+    # the network small -- descriptions are large and most callers ignore them.
     client = get_client()
     res = client.execute(
         f"SELECT {_JOB_LIST_COLUMNS} FROM jobs ORDER BY first_seen_at DESC LIMIT ?", [limit]
@@ -596,7 +652,7 @@ def get_open_jobs() -> list[dict]:
     client = get_client()
     res = client.execute(
         "SELECT * FROM jobs WHERE closed_at IS NULL AND done_at IS NULL "
-        "ORDER BY company_name, title"
+        "AND dismissed_at IS NULL ORDER BY company_name, title"
     )
     return _rows_to_dicts(res)
 

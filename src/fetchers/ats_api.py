@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from .base import FetchError, http_get_json
+from .base import FetchError, http_get_json, to_iso_date
 
 logger = logging.getLogger("job_alert.fetchers.ats_api")
 
@@ -161,6 +161,7 @@ def fetch_greenhouse(slug: str, **_) -> list[dict]:
             "location": (j.get("location") or {}).get("name"),
             "url": j.get("absolute_url", ""),
             "description": j.get("content", ""),
+            "posted_at": to_iso_date(j.get("first_published") or j.get("updated_at")),
         })
     return jobs
 
@@ -179,6 +180,7 @@ def fetch_lever(slug: str, **_) -> list[dict]:
             "location": categories.get("location"),
             "url": j.get("hostedUrl", ""),
             "description": j.get("descriptionPlain") or j.get("description", ""),
+            "posted_at": to_iso_date(j.get("createdAt")),
         })
     return jobs
 
@@ -198,6 +200,7 @@ def fetch_ashby(slug: str, **_) -> list[dict]:
             "location": j.get("location"),
             "url": j.get("jobUrl", ""),
             "description": j.get("descriptionHtml") or j.get("descriptionPlain", ""),
+            "posted_at": to_iso_date(j.get("publishedAt")),
         })
     return jobs
 
@@ -242,6 +245,7 @@ def fetch_smartrecruiters(slug: str, **_) -> list[dict]:
             "location": location or None,
             "url": j.get("ref") or j.get("applyUrl", ""),
             "description": j.get("jobAd", {}).get("sections", {}).get("jobDescription", {}).get("text", ""),
+            "posted_at": to_iso_date(j.get("releasedDate")),
         })
     return jobs
 
@@ -355,6 +359,7 @@ def fetch_amazon(identifier: str = "IND", **_) -> list[dict]:
                     j.get("basic_qualifications"),
                     j.get("preferred_qualifications"),
                 ))),
+                "posted_at": to_iso_date(j.get("posted_date")),
             })
 
         if len(batch) < _AMAZON_PAGE or len(jobs) >= int(data.get("hits") or 0):
@@ -413,6 +418,7 @@ def fetch_jibe(host: str, **_) -> list[dict]:
                 "description": " ".join(filter(None, (
                     d.get("description"), d.get("qualifications"),
                 ))),
+                "posted_at": to_iso_date(d.get("posted_date") or d.get("create_date")),
             })
 
         if len(jobs) >= int(data.get("totalCount") or 0):

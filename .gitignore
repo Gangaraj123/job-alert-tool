@@ -8,3 +8,7 @@ data/local.db-*
 job_alert.log
 .streamlit/secrets.toml
 ui/.streamlit/secrets.toml
+
+web/.env.local
+web/node_modules
+web/.next

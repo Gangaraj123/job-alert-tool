@@ -511,6 +511,10 @@ def run_pipeline(dry_run: bool = False, no_email: bool = False, triggered_by: st
     # Every job this run matched, new or already-seen — for full run history.
     db.record_run_jobs(run_id, [j["id"] for j in filtered])
 
+    backfilled = db.backfill_posted_dates(filtered)
+    if backfilled:
+        logger.info("Filled in posting dates for %d existing job(s)", backfilled)
+
     digest_jobs = db.get_unnotified_jobs()
     open_jobs = db.get_open_jobs()
     broken_companies = [c for c in db.list_companies() if c.get("last_status") == "error"]

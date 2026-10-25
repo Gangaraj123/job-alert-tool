@@ -51,6 +51,10 @@ def normalize_job(raw: dict, company_name: str, fetch_tier: str) -> dict:
         "location": location,
         "url": url,
         "description": description,
+        # When the company published it, where the source tells us. Left
+        # None rather than guessed: the UI sorts and filters on this, so a
+        # wrong date is worse than an absent one.
+        "posted_at": raw.get("posted_at") or None,
         "fetch_tier": fetch_tier,
     }
 

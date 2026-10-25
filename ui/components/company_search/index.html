@@ -1,0 +1,148 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #ffffff; --text: #15161A; --muted: #6B7280;
+    --line: #E5E7EB; --accent: #4F46E5; --hover: #F3F4F6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif; background: transparent; color: var(--text);
+  }
+  .wrap { position: relative; }
+  .field { display: flex; align-items: center; gap: .5rem;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+    padding: .55rem .7rem; transition: border-color .12s, box-shadow .12s; }
+  .field:focus-within { border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,70,229,.14); }
+  .field svg { flex: none; color: var(--muted); }
+  input { flex: 1; border: 0; outline: 0; background: transparent;
+    font: inherit; font-size: .93rem; color: var(--text); min-width: 0; }
+  input::placeholder { color: var(--muted); }
+  .list { position: absolute; left: 0; right: 0; top: calc(100% + 6px);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(16,18,27,.12); overflow: hidden; z-index: 40; }
+  .row { display: flex; align-items: center; gap: .65rem; padding: .5rem .7rem;
+    cursor: pointer; border: 0; width: 100%; background: none; text-align: left;
+    font: inherit; }
+  .row:hover, .row[aria-selected="true"] { background: var(--hover); }
+  .row img { width: 22px; height: 22px; border-radius: 5px; object-fit: contain;
+    border: 1px solid var(--line); background: #fff; padding: 1px; flex: none; }
+  .nm { font-weight: 600; font-size: .9rem; }
+  .mt { color: var(--muted); font-size: .78rem; }
+  .sep { color: var(--line); }
+  .empty { padding: .7rem; color: var(--muted); font-size: .85rem; }
+  mark { background: #FEF3C7; color: inherit; padding: 0 1px; border-radius: 2px; }
+</style>
+
+<div class="wrap">
+  <label class="field">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+    <input id="q" autocomplete="off" spellcheck="false">
+  </label>
+  <div id="list" class="list" hidden></div>
+</div>
+
+<script>
+// Streamlit's component protocol is just postMessage, so this needs no build
+// step and no CDN script -- which matters because the iframe is sandboxed.
+const send = (type, extra) =>
+  window.parent.postMessage({ isStreamlitMessage: true, type, ...extra }, "*");
+const setValue = (value) =>
+  send("streamlit:setComponentValue", { value, dataType: "json" });
+const setHeight = (h) => send("streamlit:setFrameHeight", { height: h });
+
+let ITEMS = [], placeholder = "Search…", active = -1, shown = [];
+const q = document.getElementById("q");
+const list = document.getElementById("list");
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function highlight(name, term) {
+  if (!term) return esc(name);
+  const i = name.toLowerCase().indexOf(term.toLowerCase());
+  if (i < 0) return esc(name);
+  return esc(name.slice(0, i)) + "<mark>" + esc(name.slice(i, i + term.length)) +
+         "</mark>" + esc(name.slice(i + term.length));
+}
+
+function render() {
+  const term = q.value.trim();
+  const t = term.toLowerCase();
+  // Prefix matches first -- typing "goo" should surface Google before
+  // anything that merely contains those letters mid-word.
+  const pool = !t ? ITEMS : ITEMS.filter(x => x.name.toLowerCase().includes(t));
+  pool.sort((a, b) => {
+    const ap = a.name.toLowerCase().startsWith(t) ? 0 : 1;
+    const bp = b.name.toLowerCase().startsWith(t) ? 0 : 1;
+    return ap - bp || a.name.localeCompare(b.name);
+  });
+  shown = pool.slice(0, 8);
+
+  if (!term) { list.hidden = true; active = -1; resize(); return; }
+  list.hidden = false;
+
+  if (!shown.length) {
+    list.innerHTML = `<div class="empty">No tracked company matches
+      “${esc(term)}”.</div>`;
+  } else {
+    list.innerHTML = shown.map((x, i) => `
+      <button class="row" data-i="${i}" aria-selected="${i === active}">
+        ${x.logo ? `<img src="${esc(x.logo)}" alt=""
+            onerror="this.style.visibility='hidden'">`
+                 : `<img alt="" style="visibility:hidden">`}
+        <span>
+          <span class="nm">${highlight(x.name, term)}</span>
+          ${x.meta ? `<span class="mt"> <span class="sep">·</span>
+            ${esc(x.meta)}</span>` : ""}
+        </span>
+      </button>`).join("");
+    list.querySelectorAll(".row").forEach(el =>
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        choose(shown[+el.dataset.i]);
+      }));
+  }
+  resize();
+}
+
+function choose(item) {
+  if (!item) return;
+  q.value = item.name;
+  list.hidden = true;
+  // Stamp each selection so picking the same name twice still registers as
+  // a change on the Python side.
+  setValue({ name: item.name, n: Date.now() });
+  resize();
+}
+
+function resize() {
+  const h = list.hidden ? 56 : 56 + list.offsetHeight + 8;
+  setHeight(h);
+}
+
+q.addEventListener("input", () => { active = -1; render(); });
+q.addEventListener("keydown", (e) => {
+  if (list.hidden) return;
+  if (e.key === "ArrowDown") { active = Math.min(active + 1, shown.length - 1); render(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { active = Math.max(active - 1, 0); render(); e.preventDefault(); }
+  else if (e.key === "Enter") { choose(shown[active] ?? shown[0]); e.preventDefault(); }
+  else if (e.key === "Escape") { list.hidden = true; resize(); }
+});
+q.addEventListener("blur", () => setTimeout(() => { list.hidden = true; resize(); }, 120));
+
+window.addEventListener("message", (e) => {
+  if (e.data?.type !== "streamlit:render") return;
+  const args = e.data.args || {};
+  ITEMS = args.items || [];
+  placeholder = args.placeholder || "Search…";
+  q.placeholder = placeholder;
+  render();
+});
+
+send("streamlit:componentReady", { apiVersion: 1 });
+setHeight(56);
+</script>

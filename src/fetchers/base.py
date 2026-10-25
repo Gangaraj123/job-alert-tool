@@ -62,3 +62,49 @@ def http_post(url: str, **kwargs) -> requests.Response:
 
 def http_get_json(url: str, **kwargs) -> dict | list:
     return http_get(url, **kwargs).json()
+
+
+def to_iso_date(value) -> str | None:
+    """Normalise an ATS date into YYYY-MM-DD, or None if unreadable.
+
+    Boards express the posting date half a dozen ways -- ISO strings with
+    and without a zone, epoch seconds, epoch milliseconds -- and a wrong
+    date is worse than none, since the UI would sort and filter on it.
+    """
+    if value in (None, "", 0):
+        return None
+
+    # Epoch, in seconds or milliseconds.
+    if isinstance(value, (int, float)) or (
+        isinstance(value, str) and value.isdigit()
+    ):
+        n = float(value)
+        if n > 1e11:  # milliseconds
+            n /= 1000.0
+        try:
+            import datetime as _dt
+            return _dt.datetime.fromtimestamp(n, _dt.timezone.utc).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        import datetime as _dt
+        cleaned = text.replace("Z", "+00:00")
+        return _dt.datetime.fromisoformat(cleaned).date().isoformat()
+    except ValueError:
+        pass
+
+    # Human formats: Amazon says "September 24, 2026", others "24 Sep 2026".
+    import datetime as _dt
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y", "%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return _dt.datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+
+    import re as _re
+    m = _re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+    return m.group(0) if m else None
