@@ -33,6 +33,8 @@ companies:
   - {name: GitLab,      domain: gitlab.com,      method: "greenhouse:gitlab"}          # 232
   - {name: InMobi,      domain: inmobi.com,      method: "greenhouse:inmobi"}          # 80
   - {name: Groww,       domain: groww.in,        method: "greenhouse:groww"}           # 10
+  - {name: Vercel,      domain: vercel.com,      method: "greenhouse:vercel"}          # 95
+  - {name: Scale AI,    domain: scale.com,       method: "greenhouse:scaleai"}         # 171
   - {name: Commvault,   domain: commvault.com,   method: "greenhouse:commvault"}       # 51
   - {name: Coupang,     domain: coupang.com,     method: "greenhouse:coupang"}         # 690
   - {name: MOLOCO,      domain: moloco.com,      method: "greenhouse:moloco"}          # 42
@@ -40,6 +42,12 @@ companies:
   - {name: Apollo.io,   domain: apollo.io,       method: "greenhouse:apolloio"}        # 53
 
   - {name: Notion,      domain: notion.so,       method: "ashby:notion"}               # 137
+  - {name: Supabase,    domain: supabase.com,    method: "ashby:supabase"}             # 61
+  - {name: Linear,      domain: linear.app,      method: "ashby:linear"}               # 34
+  - {name: Ramp,        domain: ramp.com,        method: "ashby:ramp"}                 # 167
+  - {name: Perplexity,  domain: perplexity.ai,   method: "ashby:perplexity"}           # 132
+  - {name: Cursor,      domain: cursor.com,      method: "ashby:cursor"}               # 126
+  - {name: Replit,      domain: replit.com,      method: "ashby:replit"}               # 37
   - {name: OpenAI,      domain: openai.com,      method: "ashby:openai"}               # 813
   - {name: Snowflake,   domain: snowflake.com,   method: "ashby:snowflake"}            # 359
   - {name: Miro,        domain: miro.com,        method: "ashby:miro"}                 # 21
@@ -80,6 +88,8 @@ companies:
   - {name: HashiCorp,   domain: hashicorp.com,   method: pending}
   - {name: Razorpay,    domain: razorpay.com,    method: pending}
   - {name: Zerodha,     domain: zerodha.com,     method: pending}
+  # lever:eternal is a DIFFERENT company (performance technicians, NYC/SF),
+  # not Zomato's parent. Not wired up.
   - {name: Zomato,      domain: zomato.com,      method: pending}
   - {name: Flipkart,    domain: flipkart.com,    method: pending}
   - {name: PhonePe,     domain: phonepe.com,     method: pending}

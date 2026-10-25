@@ -24,26 +24,14 @@ render_sidebar()
 
 
 
+_NO_PICK = "\u2014"  # sentinel for "nothing selected" in the selectbox
+
+
 def _reset_search() -> None:
     """Clear the search box and cached results after a successful add, so the
     page returns to a clean state instead of re-offering a tracked company."""
     for key in ("search_query", "search_results", "searched_query"):
         st.session_state.pop(key, None)
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _registry_matches(query: str) -> list[dict]:
-    """Registry entries whose name contains the query. Local and in-memory —
-    no network call, so it runs on every keystroke without cost."""
-    q = query.strip().lower()
-    if len(q) < 2:
-        return []
-    exact = [e for e in registry.all_entries() if e["name"].lower() == q]
-    partial = [
-        e for e in registry.all_entries()
-        if q in e["name"].lower() and e["name"].lower() != q
-    ]
-    return exact + partial
 
 
 def _add(name: str, *, pending: bool = False) -> None:
@@ -73,52 +61,69 @@ st.markdown(
 )
 
 with st.expander("Add a company", expanded=not db.list_companies()):
-    query = st.text_input(
-        "Company name", key="search_query", placeholder="e.g. Stripe"
-    ).strip()
+    # A selectbox so matches appear WHILE typing: Streamlit's text_input only
+    # commits on Enter or blur, so a typed search box could not narrow the
+    # list live. The selectbox's type-ahead is native and instant.
+    known = registry.all_entries()
+    tracked = {c["name"] for c in db.list_companies()}
 
-    if query:
-        matches = _registry_matches(query)
+    def _label(name: str) -> str:
+        if name == _NO_PICK:
+            return "Search a company by name…"
+        entry = registry.lookup(name)
+        ats, _ = registry.parse_method((entry or {}).get("method", ""))
+        mark = "✓ tracked" if name in tracked else (ats or "needs setup")
+        return f"{name} — {mark}"
 
-        for entry in matches:
-            ats, _ = registry.parse_method(entry["method"])
-            with st.container(border=True):
-                row = st.columns([0.6, 4, 1.4])
-                row[0].markdown(
-                    logo_img(registry.logo_for(entry["domain"]) or ""),
-                    unsafe_allow_html=True,
-                )
-                badge = (
-                    chip(f"{ats} · verified", "ok") if ats
-                    else chip("needs setup", "warn")
-                )
-                row[1].markdown(
-                    f"**{entry['name']}** &nbsp; {badge}<br>"
-                    f"<span class='meta'>{entry['domain'] or ''}</span>",
-                    unsafe_allow_html=True,
-                )
-                if db.get_company_by_name(entry["name"]):
-                    row[2].button(
-                        "Tracked", disabled=True, key=f"dupe_{entry['name']}"
-                    )
-                elif row[2].button(
-                    "Add", type="primary", key=f"add_{entry['name']}"
-                ):
-                    _add(entry["name"])
+    picked = st.selectbox(
+        "Company name",
+        options=[_NO_PICK] + [e["name"] for e in known],
+        format_func=_label,
+        key="known_pick",
+        label_visibility="collapsed",
+    )
 
-        # Nothing in the registry matches: save the name as typed rather than
-        # making the user hunt for a careers URL. Auto-detection used to run
-        # here and was the slowest, least reliable part of the page -- it
-        # could not resolve self-hosted boards like Amazon's at all.
-        if not matches:
-            st.caption(
-                f"\"{query}\" isn't set up yet. Save it to the upcoming list "
-                "and it will be wired up on the next review."
+    if picked != _NO_PICK:
+        entry = registry.lookup(picked)
+        ats, _ = registry.parse_method(entry["method"])
+        with st.container(border=True):
+            row = st.columns([0.6, 4, 1.4])
+            row[0].markdown(
+                logo_img(registry.logo_for(entry["domain"]) or ""),
+                unsafe_allow_html=True,
             )
-            if st.button(
-                f"Save \"{query}\" to upcoming list", key="save_pending"
-            ):
-                _add(query, pending=True)
+            badge = (
+                chip(f"{ats} · verified", "ok") if ats
+                else chip("needs setup", "warn")
+            )
+            row[1].markdown(
+                f"**{entry['name']}** &nbsp; {badge}<br>"
+                f"<span class='meta'>{entry['domain'] or ''}</span>",
+                unsafe_allow_html=True,
+            )
+            if entry["name"] in tracked:
+                row[2].button("Already tracked", disabled=True, key="known_dupe")
+            elif row[2].button("Add", type="primary", key="known_add"):
+                _add(entry["name"])
+
+    # Anything not in the 67-company list: say so plainly and save the name
+    # as typed rather than making the user hunt for a careers URL.
+    st.divider()
+    st.caption("Can't find it above? It isn't in the known list yet.")
+    custom = st.text_input(
+        "Company not listed",
+        key="custom_name",
+        placeholder="e.g. Supabase",
+        label_visibility="collapsed",
+    ).strip()
+    if custom:
+        hit = registry.lookup(custom)
+        if hit and hit["name"] in tracked:
+            st.info(f"{hit['name']} is already tracked.")
+        elif hit:
+            st.info(f"{hit['name']} is in the known list — pick it above to add it.")
+        elif st.button(f'Save "{custom}" to upcoming list', key="save_pending"):
+            _add(custom, pending=True)
 
 companies = db.list_companies()
 if not companies:
