@@ -11,16 +11,22 @@ client — handy for `--test-company` runs and Streamlit local dev.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Iterable
 
+import aiohttp
 import libsql_client
+import tenacity
 
 from .config import ROOT_DIR, load_settings
 
-_client: libsql_client.Client | None = None
+logger = logging.getLogger("job_alert.db")
+
+_client: "_RetryingClient | None" = None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
@@ -126,7 +132,55 @@ DEFAULT_FILTERS = {
 }
 
 
-def get_client() -> libsql_client.Client:
+_TRANSIENT_HTTP_STATUSES = ("429", "502", "503", "504")
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """True for failures that say nothing about the query itself: Turso's
+    edge briefly answering 502/503/504 (or rate-limiting), or the connection
+    dropping. A 2026-11-10 cron run died on a single 502 mid-pipeline and
+    lost the whole day's digest, so these get retried rather than raised."""
+    if isinstance(exc, libsql_client.LibsqlError):
+        return exc.code == "SERVER_ERROR" and any(
+            f"HTTP status {s}" in exc.explanation for s in _TRANSIENT_HTTP_STATUSES
+        )
+    return isinstance(exc, (aiohttp.ClientConnectionError, asyncio.TimeoutError, ConnectionError))
+
+
+_retry_transient = tenacity.retry(
+    retry=tenacity.retry_if_exception(_is_transient),
+    stop=tenacity.stop_after_attempt(5),
+    wait=tenacity.wait_exponential(multiplier=1, min=1, max=15),
+    before_sleep=lambda rs: logger.warning(
+        "DB call failed transiently (%s), retrying (attempt %d)",
+        rs.outcome.exception(), rs.attempt_number,
+    ),
+    reraise=True,
+)
+
+
+class _RetryingClient:
+    """Wraps the sync libsql client so every statement survives a brief
+    Turso blip. Safe to retry because the writes here are idempotent
+    (UPDATEs, and INSERTs with ON CONFLICT DO NOTHING); the exception is an
+    AUTOINCREMENT insert, where the worst case is one stray empty row."""
+
+    def __init__(self, inner: libsql_client.ClientSync):
+        self._inner = inner
+
+    @_retry_transient
+    def execute(self, *args: Any, **kwargs: Any):
+        return self._inner.execute(*args, **kwargs)
+
+    @_retry_transient
+    def batch(self, *args: Any, **kwargs: Any):
+        return self._inner.batch(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def get_client() -> _RetryingClient:
     global _client
     if _client is not None:
         return _client
@@ -136,13 +190,14 @@ def get_client() -> libsql_client.Client:
         url = settings.turso_database_url
         if url.startswith("libsql://"):
             url = "https://" + url[len("libsql://"):]
-        _client = libsql_client.create_client_sync(
+        inner = libsql_client.create_client_sync(
             url=url, auth_token=settings.turso_auth_token
         )
     else:
         data_dir = ROOT_DIR / "data"
         data_dir.mkdir(exist_ok=True)
-        _client = libsql_client.create_client_sync(url=f"file:{data_dir / 'local.db'}")
+        inner = libsql_client.create_client_sync(url=f"file:{data_dir / 'local.db'}")
+    _client = _RetryingClient(inner)
     return _client
 
 
